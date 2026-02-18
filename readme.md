@@ -1,210 +1,366 @@
 # 🛡️ LLM-Powered SOC Analyst
+
+<div align="center">
+
 ### Autonomous Security Investigation using Gemini LLM and Retrieval-Augmented Generation (RAG)
 
-![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)
-![FastAPI](https://img.shields.io/badge/FastAPI-Framework-green.svg)
-![LLM](https://img.shields.io/badge/LLM-Gemini-orange.svg)
-![Status](https://img.shields.io/badge/Status-Active-success.svg)
-![License](https://img.shields.io/badge/License-MIT-yellow.svg)
+![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-Framework-009688?style=for-the-badge&logo=fastapi&logoColor=white)
+![LLM](https://img.shields.io/badge/LLM-Gemini-FF6F00?style=for-the-badge&logo=google&logoColor=white)
+![Status](https://img.shields.io/badge/Status-Active-00C853?style=for-the-badge)
+![License](https://img.shields.io/badge/License-MIT-FFC107?style=for-the-badge)
+
+</div>
 
 ---
 
 ## 📖 Overview
 
-LLM-Powered SOC Analyst is an autonomous cybersecurity investigation system that uses Large Language Models (Gemini) to analyze security logs, reconstruct attack timelines, map threats to MITRE ATT&CK techniques, and generate explainable incident reports.
+**LLM-Powered SOC Analyst** is an autonomous cybersecurity investigation system that leverages Large Language Models (Gemini) to analyze security logs, reconstruct attack timelines, and map threats to the **MITRE ATT&CK** framework.
 
-Traditional SIEM tools like Splunk generate alerts but require human analysts to investigate. This system performs autonomous investigation, reasoning over complete attack sequences and providing actionable intelligence.
+Traditional SIEM tools like Splunk generate alerts but require human analysts to investigate. This system performs **autonomous investigation**, reasoning over complete attack sequences and providing actionable intelligence.
 
 ---
 
 ## 🎯 Problem Statement
 
-Security Operations Centers face:
+<table>
+<tr>
+<td width="50%">
 
-- Massive volumes of security logs
-- High false positive rates
-- Manual investigation workload
-- Alert fatigue among analysts
-- Slow incident response times
+### Challenges in Security Operations Centers
 
-This project solves these problems using LLM-powered reasoning.
+- 📊 **Massive volumes** of security logs
+- ⚠️ **High false positive** rates
+- 🔍 **Manual investigation** workload
+- 😰 **Alert fatigue** among analysts
+- ⏱️ **Slow incident response** times
+
+</td>
+<td width="50%">
+
+### Our Solution
+
+✅ **LLM-powered reasoning** over security events  
+✅ **Autonomous investigation** capabilities  
+✅ **RAG-based knowledge** grounding  
+✅ **MITRE ATT&CK** technique mapping  
+✅ **Explainable AI** security analysis  
+
+</td>
+</tr>
+</table>
 
 ---
 
 ## 🚀 Key Features
 
-- Autonomous log investigation using Gemini LLM
-- Retrieval-Augmented Generation (RAG) knowledge grounding
-- MITRE ATT&CK technique mapping
-- Attack timeline reconstruction
-- Structured incident report generation
-- Confidence scoring and severity classification
-- Explainable AI security analysis
-- Human-in-the-loop decision support
+<div align="center">
+
+| Feature | Description |
+|---------|-------------|
+| 🤖 **Autonomous Investigation** | Gemini LLM analyzes security logs without human intervention |
+| 📚 **RAG Knowledge Base** | Grounds analysis in MITRE ATT&CK framework |
+| 🎯 **Threat Mapping** | Automatically maps threats to MITRE techniques |
+| ⏳ **Timeline Reconstruction** | Reconstructs complete attack sequences |
+| 📄 **Structured Reports** | Generates comprehensive incident reports |
+| 📊 **Confidence Scoring** | Provides severity classification and confidence levels |
+| 💡 **Explainable AI** | Transparent reasoning for security decisions |
+| 👥 **Human-in-the-Loop** | Supports analyst decision-making |
+
+</div>
 
 ---
 
 ## 🏗️ Architecture
 
+<div align="center">
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           🛡️ SOC ANALYST INTERFACE                      │
+│                     (Human Review & Response Actions)                   │
+└────────────────────────────────┬────────────────────────────────────────┘
+                                 │
+┌────────────────────────────────▼────────────────────────────────────────┐
+│                      📋 INCIDENT REPORT GENERATOR                       │
+│         (Attack Stage, MITRE Mapping, Severity, Remediation)            │
+└────────────────────────────────┬────────────────────────────────────────┘
+                                 │
+┌────────────────────────────────▼────────────────────────────────────────┐
+│                       🔍 INVESTIGATION ENGINE                           │
+│         (Timeline Reconstruction, Event Correlation, Analysis)          │
+└─────────────┬───────────────────────────────────────┬────────────────────┘
+              │                                       │
+┌─────────────▼──────────────┐          ┌────────────▼──────────────────┐
+│   🤖 GEMINI LLM AGENT      │          │    📚 RAG KNOWLEDGE BASE      │
+│  (Reasoning & Analysis)    │◄────────►│  (MITRE ATT&CK + ChromaDB)   │
+└─────────────┬──────────────┘          └───────────────────────────────┘
+              │
+┌─────────────▼──────────────────────────────────────────────────────────┐
+│                      ⚡ FASTAPI ORCHESTRATOR                            │
+│              (Central Controller & Processing Coordinator)              │
+└─────────────┬──────────────────────────────────────────────────────────┘
+              │
+┌─────────────▼──────────────────────────────────────────────────────────┐
+│                      📥 LOG INGESTION LAYER                             │
+│           (Collection, Cleaning, Normalization, Structuring)            │
+└─────────────┬──────────────────────────────────────────────────────────┘
+              │
+┌─────────────▼──────────────────────────────────────────────────────────┐
+│                          📡 LOG SOURCES                                 │
+│         (Authentication, Process Execution, Network Activity)           │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+</div>
 
 ---
 
-### Component Description
+### 📦 Component Description
 
-#### 1. Log Sources
-Provides raw security telemetry such as:
+<details>
+<summary><b>1. 📡 Log Sources</b></summary>
 
-- Authentication logs  
-- Process execution logs  
-- Network activity logs  
+Provides raw security telemetry:
+- 🔐 Authentication logs  
+- ⚙️ Process execution logs  
+- 🌐 Network activity logs  
 
----
+</details>
 
-#### 2. Log Ingestion Layer
+<details>
+<summary><b>2. 📥 Log Ingestion Layer</b></summary>
+
 Responsible for:
+- 📨 Collecting logs from multiple sources
+- 🧹 Cleaning and normalizing data  
+- 📋 Converting logs into structured format  
 
-- Collecting logs  
-- Cleaning and normalizing data  
-- Converting logs into structured format  
+</details>
 
----
+<details>
+<summary><b>3. ⚡ FastAPI Orchestrator</b></summary>
 
-#### 3. FastAPI Orchestrator
-Acts as the central controller that:
+Acts as the central controller:
+- 📩 Receives logs
+- 🎯 Coordinates processing
+- 🤖 Calls Gemini LLM agent
+- 📚 Retrieves knowledge from RAG system
 
-- Receives logs
-- Coordinates processing
-- Calls Gemini LLM agent
-- Retrieves knowledge from RAG system
+</details>
 
----
+<details>
+<summary><b>4. 🤖 Gemini LLM Agent (Reasoning Core)</b></summary>
 
-#### 4. Gemini LLM Agent (Reasoning Core)
 Performs:
+- 🔍 Autonomous log investigation
+- 🧠 Threat reasoning and analysis
+- 🎯 Attack pattern identification
 
-- Autonomous log investigation
-- Threat reasoning and analysis
-- Attack pattern identification
+</details>
 
----
+<details>
+<summary><b>5. 📚 RAG Knowledge Base</b></summary>
 
-#### 5. RAG Knowledge Base
-Provides grounded cybersecurity knowledge using:
+Provides grounded cybersecurity knowledge:
+- 🎯 MITRE ATT&CK framework
+- 🗄️ Vector database (ChromaDB)
+- 🔎 Semantic retrieval
 
-- MITRE ATT&CK framework
-- Vector database (ChromaDB)
-- Semantic retrieval
+</details>
 
----
+<details>
+<summary><b>6. 🔍 Investigation Engine</b></summary>
 
-#### 6. Investigation Engine
 Responsible for:
+- ⏳ Timeline reconstruction
+- 🔗 Event correlation
+- 📊 Attack sequence analysis
 
-- Timeline reconstruction
-- Event correlation
-- Attack sequence analysis
+</details>
 
----
+<details>
+<summary><b>7. 📋 Incident Report Generator</b></summary>
 
-#### 7. Incident Report Generator
-Generates structured reports containing:
+Generates structured reports:
+- 🎭 Attack stage identification
+- 🎯 MITRE technique mapping
+- ⚠️ Severity level assessment
+- 📊 Confidence score
+- 💡 Recommended remediation actions
 
-- Attack stage
-- MITRE technique mapping
-- Severity level
-- Confidence score
-- Recommended remediation actions
+</details>
 
----
+<details>
+<summary><b>8. 🛡️ SOC Analyst Interface</b></summary>
 
-#### 8. SOC Analyst Interface
 Allows human analyst to:
+- 📖 Review investigation results
+- ✅ Validate findings
+- 🚀 Take response actions
 
-- Review investigation results
-- Validate findings
-- Take response actions
-
----
-
-### Architecture Highlights
-
-- Modular and scalable design  
-- Agent-based investigation model  
-- LLM-powered reasoning engine  
-- Knowledge-grounded threat analysis  
-- Explainable incident reporting  
+</details>
 
 ---
 
----
+### ✨ Architecture Highlights
+
+```diff
++ Modular and scalable design  
++ Agent-based investigation model  
++ LLM-powered reasoning engine  
++ Knowledge-grounded threat analysis  
++ Explainable incident reporting  
+```
 
 ---
 
 ## 🔄 Project Workflow
 
-### Step 1: Log Ingestion
-Security logs are received from authentication systems, endpoints, and network activity.
+<div align="center">
 
-### Step 2: Log Processing
-Logs are cleaned, normalized, and converted into structured format.
+```mermaid
+graph TD
+    A[📡 Log Ingestion] --> B[📥 Log Processing]
+    B --> C[🤖 Autonomous Investigation]
+    C --> D[📚 Knowledge Retrieval - RAG]
+    D --> E[⏳ Timeline Reconstruction]
+    E --> F[📋 Incident Report Generation]
+    F --> G[👤 Human Analyst Review]
+    
+    style A fill:#4CAF50,stroke:#2E7D32,color:#fff
+    style B fill:#2196F3,stroke:#1565C0,color:#fff
+    style C fill:#FF9800,stroke:#E65100,color:#fff
+    style D fill:#9C27B0,stroke:#4A148C,color:#fff
+    style E fill:#F44336,stroke:#B71C1C,color:#fff
+    style F fill:#00BCD4,stroke:#006064,color:#fff
+    style G fill:#FFC107,stroke:#F57F17,color:#000
+```
 
-### Step 3: Autonomous Investigation
-Gemini LLM analyzes logs and detects suspicious patterns.
-
-### Step 4: Knowledge Retrieval (RAG)
-System retrieves MITRE ATT&CK knowledge to validate threats.
-
-### Step 5: Timeline Reconstruction
-System reconstructs full attack sequence.
-
-### Step 6: Incident Report Generation
-System generates structured incident report.
-
-### Step 7: Human Analyst Review
-SOC analyst reviews and approves actions.
+</div>
 
 ---
 
+### 📋 Workflow Steps
+
+| Step | Description |
+|------|-------------|
+| **1️⃣ Log Ingestion** | Security logs are received from authentication systems, endpoints, and network activity |
+| **2️⃣ Log Processing** | Logs are cleaned, normalized, and converted into structured format |
+| **3️⃣ Autonomous Investigation** | Gemini LLM analyzes logs and detects suspicious patterns |
+| **4️⃣ Knowledge Retrieval (RAG)** | System retrieves MITRE ATT&CK knowledge to validate threats |
+| **5️⃣ Timeline Reconstruction** | System reconstructs full attack sequence |
+| **6️⃣ Incident Report Generation** | System generates structured incident report |
+| **7️⃣ Human Analyst Review** | SOC analyst reviews and approves actions |
+
+---
 
 ## ⚙️ System Requirements
 
-### Hardware
+### 💻 Hardware
 
-- CPU: Minimum 4 cores
-- RAM: Minimum 8 GB (Recommended 16 GB)
-- Storage: Minimum 5 GB free
-- Internet connection required
+| Component | Minimum | Recommended |
+|-----------|---------|-------------|
+| **CPU** | 4 cores | 8+ cores |
+| **RAM** | 8 GB | 16 GB |
+| **Storage** | 5 GB free | 10 GB+ free |
+| **Internet** | Required | High-speed connection |
 
 ---
 
-### Software
+### 🛠️ Software
 
-Required software:
+<table>
+<tr>
+<td>
 
-- Python 3.10+
-- pip
-- Git
-- Virtual environment (recommended)
+**Required Software:**
+- 🐍 Python 3.10+
+- 📦 pip
+- 🔧 Git
+- 🌐 Virtual environment (recommended)
 
-Check Python version:
+</td>
+<td>
 
-bash
+**Check Python Version:**
+```bash
 python --version
+```
 
-Clone the project from GitHub:
+</td>
+</tr>
+</table>
 
+---
+
+## 🚀 Installation Guide
+
+### 1️⃣ Clone the Repository
+
+```bash
 git clone https://github.com/akash4426/LLM_Powered_SOC_Analyst.git
+cd LLM_Powered_SOC_Analyst
+```
 
-Create Virtual Environment (Recommended)
-Windows
+---
+
+### 2️⃣ Create Virtual Environment
+
+<details>
+<summary><b>🪟 Windows</b></summary>
+
+```bash
 python -m venv venv
 venv\Scripts\activate
+```
 
-Linux / macOS
+</details>
+
+<details>
+<summary><b>🐧 Linux / macOS</b></summary>
+
+```bash
 python3 -m venv venv
 source venv/bin/activate
+```
 
-Install all required Python packages:
+</details>
 
+---
+
+### 3️⃣ Install Dependencies
+
+```bash
 pip install -r requirements.txt
+```
 
+---
+
+## 📜 License
+
+This project is licensed under the **MIT License**.
+
+---
+
+## 🤝 Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+---
+
+## 📧 Contact
+
+**Author:** Akash  
+**GitHub:** [@akash4426](https://github.com/akash4426)
+
+---
+
+<div align="center">
+
+### ⭐ If you find this project useful, please consider giving it a star!
+
+**Made with ❤️ by Akash**
+
+</div>
