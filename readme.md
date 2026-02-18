@@ -188,7 +188,7 @@ Required software:
 
 Check Python version:
 
-```bash
+bash
 python --version
 
 Clone the project from GitHub:
