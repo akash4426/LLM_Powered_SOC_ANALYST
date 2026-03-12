@@ -1,9 +1,24 @@
 from fastapi import FastAPI
+from backend.models import LogRequest
+from backend.log_parser import parse_logs
+from backend.llm_agent import investigate_logs
 
-app=FastAPI()
+app = FastAPI(title="LLM Powered SOC Analyst")
 
-@app.get("/predict")
 
-def predict():
+@app.get("/")
+def home():
+    return {"status": "SOC Analyst API Running"}
 
-    return {'message':'This is a prediction number or an endpoint for the prediction model and the model will be trained and tested well'}
+
+@app.post("/investigate")
+def investigate(request: LogRequest):
+
+    parsed_logs = parse_logs(request.logs)
+
+    result = investigate_logs(request.logs)
+
+    return {
+        "parsed_logs": parsed_logs,
+        "investigation": result
+    }
