@@ -34,6 +34,8 @@ Return a structured report containing:
 - confidence
 - explanation
 - recommended_actions
+
+highlight them as bullet points and keep the explanation under 10 lines and make it brief.
 """
 
     response = model.generate_content(prompt)
