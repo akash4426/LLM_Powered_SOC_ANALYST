@@ -260,7 +260,9 @@ Log Normalization
      ↓
 Event Extraction
      ↓
-Behavior Analysis (LSTM SEQUENCE DETECTION)
+Sequence builder
+     ↓
+Behavior Analysis (LSTM)
      ↓
 RAG Knowledge Retrieval
      ↓
