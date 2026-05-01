@@ -40,6 +40,7 @@ from collections import Counter
 from backend.models.lstm_model import score_sequence
 from backend.rag.rag_engine import retrieve_context
 from backend.processing.event_extractor import SecurityEvent, get_mitre_query
+from backend.processing.pattern_detector import detect_patterns
 
 logger = logging.getLogger(__name__)
 
@@ -305,33 +306,34 @@ def compute_confidence(evidence: EvidenceLedger) -> float:
     Formula:
       confidence = (
         0.4 * lstm_score +
-        0.3 * min(rag_matches / 5, 1.0) +
-        0.2 * min(correlation_depth / 4, 1.0) +
-        0.1 * threat_intel_score
+        0.25 * min(rag_matches / 5.0, 1.0) +
+        0.2 * min(correlation_depth / 4.0, 1.0) +
+        0.15 * threat_intel_score
       )
     
     All components normalized to [0, 1], final result rounded to 4 decimals.
     """
     confidence = (
         0.4 * min(evidence.lstm_score, 1.0) +
-        0.3 * min(evidence.rag_matches / 5.0, 1.0) +
+        0.25 * min(evidence.rag_matches / 5.0, 1.0) +
         0.2 * min(evidence.correlation_depth / 4.0, 1.0) +
-        0.1 * min(evidence.threat_intel_score, 1.0)
+        0.15 * min(evidence.threat_intel_score, 1.0)
     )
     return round(min(confidence, 1.0), 4)
 
 
-def decide_action(confidence: float) -> str:
+def decide_action(confidence: float, severity: str = "LOW") -> str:
     """
-    Decision logic based on confidence threshold.
+    Decision logic based on confidence threshold AND severity.
     
-    - confidence > 0.85  → AUTO_REMEDIATE (immediate action)
-    - 0.6 < confidence ≤ 0.85 → ESCALATE_L2 (analyst review + action)
-    - confidence ≤ 0.6   → MONITOR (watch and log)
+    - If severity CRITICAL and confidence >= 0.5 -> AUTO_REMEDIATE
+    - If severity HIGH/CRITICAL or confidence >= 0.6 -> ESCALATE_L2
+    - otherwise -> MONITOR
     """
-    if confidence > 0.85:
+    sev = severity.upper()
+    if sev == "CRITICAL" and confidence >= 0.5:
         return "AUTO_REMEDIATE"
-    elif confidence > 0.6:
+    elif sev in ("HIGH", "CRITICAL") or confidence >= 0.6:
         return "ESCALATE_L2"
     else:
         return "MONITOR"
@@ -348,8 +350,10 @@ def build_timeline(correlation: CorrelationResult, current_record: SessionRecord
     
     for sess in sessions:
         for evt in sess.events_summary:
+            # Ensure timestamp is never null — fall back to session timestamp
+            ts = evt.get("timestamp") or sess.timestamp or ""
             timeline.append({
-                "timestamp": evt.get("timestamp", sess.timestamp),
+                "timestamp": ts,
                 "entity_id": sess.entity_id,
                 "event_type": evt.get("event_type", "UNKNOWN"),
                 "description": evt.get("description", ""),
@@ -366,35 +370,28 @@ def compute_severity(
     anomaly_score: float,
     correlation_depth: int,
     mitre_count: int,
-    campaign_pattern: Optional[str]
+    threat_intel_score: float
 ) -> str:
     """
-    Compute severity based on multiple factors.
+    Compute severity (threat risk) based on multiple factors.
     
-    Base severity:
-      - CRITICAL: anomaly ≥ 0.8 AND depth ≥ 3 AND mitre ≥ 3
-      - HIGH: anomaly ≥ 0.6 OR (depth ≥ 2 AND mitre ≥ 2)
-      - MEDIUM: anomaly ≥ 0.4 OR mitre ≥ 1
-      - LOW: default
-    
-    Boost if campaign pattern detected:
-      LOW → MEDIUM, MEDIUM → HIGH, HIGH → CRITICAL
+    Rules (Signal Fusion):
+    - Behavior (LSTM) is primary signal:
+      - anomaly_score < 0.2 -> LOW or MEDIUM (even if MITRE exists)
+      - anomaly_score between 0.2 and 0.6 -> MEDIUM
+      - anomaly_score >= 0.6 -> HIGH or CRITICAL
     """
-    if anomaly_score >= 0.8 and correlation_depth >= 3 and mitre_count >= 3:
-        base = "CRITICAL"
-    elif anomaly_score >= 0.6 or (correlation_depth >= 2 and mitre_count >= 2):
-        base = "HIGH"
-    elif anomaly_score >= 0.4 or mitre_count >= 1:
-        base = "MEDIUM"
+    if anomaly_score < 0.2:
+        if mitre_count >= 1 or threat_intel_score > 0 or correlation_depth >= 1:
+            return "MEDIUM"
+        return "LOW"
+    elif anomaly_score < 0.6:
+        return "MEDIUM"
     else:
-        base = "LOW"
-    
-    # Boost severity if known campaign pattern
-    if campaign_pattern:
-        boost_map = {"LOW": "MEDIUM", "MEDIUM": "HIGH", "HIGH": "CRITICAL"}
-        base = boost_map.get(base, base)
-    
-    return base
+        # anomaly >= 0.6
+        if anomaly_score >= 0.8 or correlation_depth >= 2 or mitre_count >= 2 or threat_intel_score > 0.5:
+            return "CRITICAL"
+        return "HIGH"
 
 
 def _fallback_explanation(incident: Dict[str, Any], severity: str) -> str:
@@ -412,7 +409,18 @@ def _fallback_explanation(incident: Dict[str, Any], severity: str) -> str:
     if mitre:
         parts.append(f"Mapped to MITRE ATT&CK techniques: {', '.join(mitre)}.")
     
-    parts.append(f"Severity assessed as {severity}. Decision: {incident.get('decision', 'MONITOR')}. Recommended: isolate affected systems, preserve forensic evidence, and escalate.")
+    # Signal fusion explanation
+    anomaly = incident.get("compound_anomaly_score", 0.0)
+    has_external = bool(mitre) or incident.get("evidence", {}).get("threat_intel_score", 0.0) > 0
+
+    if anomaly < 0.2 and has_external:
+        parts.append("External threat indicators are present, but behavioral analysis does not confirm malicious activity. Monitoring recommended.")
+    elif anomaly >= 0.6:
+        parts.append("Behavior strongly deviates from normal patterns, consistent with attack behavior.")
+    elif anomaly < 0.2 and not has_external:
+        parts.append("No significant behavioral deviations or external threat indicators observed.")
+        
+    parts.append(f"Severity assessed as {severity}. Decision: {incident.get('decision', 'MONITOR')}.")
     
     return " ".join(parts)
 
@@ -462,9 +470,12 @@ DETECTION IMPROVEMENT: {incident.get('detection_improvement', 'N/A')}
 INSTRUCTIONS:
 1. Write a 3-4 sentence narrative explaining this incident
 2. Describe what the attacker likely attempted based on the timeline
-3. Provide 3 specific mitigation/response actions
-4. Do NOT generate or modify any scores, severity, or confidence values
-5. Return ONLY a JSON object with keys: "narrative", "attack_assessment", "mitigations"
+3. If anomaly_score is low (< 0.2) but MITRE techniques or threat intel are present, acknowledge the external indicators but state that behavioral analysis does not confirm malicious activity.
+4. If anomaly_score is high (>= 0.6), state that behavior strongly deviates from normal patterns.
+5. Keep the explanation under 4 sentences. Do NOT invent new facts.
+6. Provide 3 specific mitigation/response actions
+7. Do NOT generate or modify any scores, severity, or confidence values
+8. Return ONLY a JSON object with keys: "narrative", "attack_assessment", "mitigations"
 
 Return valid JSON only:"""
 
@@ -492,7 +503,8 @@ def analyze_with_agent(
     entity_id: str,
     timestamp: str,
     events: List[SecurityEvent] = None,
-    threat_intel_score: float = 0.0
+    threat_intel_score: float = 0.0,
+    anomaly_score: Optional[float] = None
 ) -> Dict[str, Any]:
     """
     Elite SOC-style agent analysis. Called AFTER existing pipeline completes.
@@ -503,6 +515,7 @@ def analyze_with_agent(
         timestamp: ISO-8601 timestamp for this session
         events: SecurityEvent list for context
         threat_intel_score: Threat intelligence risk score [0, 1]
+        anomaly_score: Pre-computed anomaly score (e.g. from network flow model)
     
     Returns:
         Dict with incident type, severity, confidence, decision, timeline, etc.
@@ -510,8 +523,13 @@ def analyze_with_agent(
     events = events or []
     session_id = str(uuid.uuid4())[:8]
 
-    # ── Step 1: Baseline pipeline outputs for current session ──────────────────
-    individual_anomaly = score_sequence(sequence)
+    # ── Step 1: Baseline pipeline outputs & Pattern Detection for current session 
+    individual_anomaly = anomaly_score if anomaly_score is not None else score_sequence(sequence)
+    
+    # Run Pattern Detector
+    pattern_name, pattern_score = detect_patterns(events)
+    effective_anomaly = max(individual_anomaly, pattern_score)
+    
     mitre_query = get_mitre_query(events)
     rag_context = retrieve_context(mitre_query, k=3)
     
@@ -545,7 +563,7 @@ def analyze_with_agent(
         epoch=epoch,
         sequence=sequence,
         event_types=event_types,
-        anomaly_score=individual_anomaly,
+        anomaly_score=effective_anomaly,
         mitre_mappings=individual_mitre,
         events_summary=events_summary,
         entity_id=entity_id
@@ -559,18 +577,45 @@ def analyze_with_agent(
 
     # ── Step 3: Hypothesis loop & compound intelligence ───────────────────────
     hypothesis = build_hypothesis(correlation.combined_event_types)
-    compound = refine_with_models(hypothesis, correlation, individual_anomaly, individual_mitre)
+    
+    # Calculate actual correlation depth
+    suspicious_events = [et for et in event_types if et != "NORMAL"]
+    if hypothesis:
+        actual_depth = 3
+    elif correlation.is_correlated:
+        actual_depth = 2
+    elif len(suspicious_events) > len(set(suspicious_events)) or pattern_name:
+        actual_depth = 1
+    else:
+        actual_depth = 0
+        
+    correlation.correlation_depth = actual_depth
+
+    compound = refine_with_models(hypothesis, correlation, effective_anomaly, individual_mitre)
 
     # ── Step 4: Build explainability reasoning ────────────────────────────────
     why_flagged = []
+    
+    # Prioritize pattern explanation if one fired
+    if pattern_name:
+        why_flagged.append(f"Heuristic Pattern Matched: {pattern_name} (Score: {pattern_score:.2f})")
+        
     if compound.compound_anomaly_score > 0.4:
-        why_flagged.append("High anomaly deviation detected")
+        why_flagged.append(f"High anomaly deviation detected (score: {compound.compound_anomaly_score:.4f})")
+    elif compound.compound_anomaly_score > 0.0 and not pattern_name:
+        why_flagged.append(f"Anomaly score: {compound.compound_anomaly_score:.4f}")
     if compound.compound_mitre_mappings:
         why_flagged.append(f"MITRE techniques matched: {', '.join(compound.compound_mitre_mappings)}")
     if hypothesis:
-        why_flagged.append(f"Multi-stage pattern matched: {hypothesis}")
+        why_flagged.append(f"Multi-stage pattern matched: {hypothesis.replace('_', ' ')}")
     if correlation.correlation_depth > 1:
-        why_flagged.append(f"Cross-session correlation detected: {correlation.correlation_depth} sessions linked")
+        why_flagged.append(f"Cross-session correlation: {correlation.correlation_depth} sessions linked")
+    # Ensure at least one reason
+    suspicious_types = [et for et in event_types if et != "NORMAL"]
+    if not why_flagged and suspicious_types:
+        why_flagged.append(f"Suspicious event types detected: {', '.join(dict.fromkeys(suspicious_types))}")
+    if not why_flagged:
+        why_flagged.append("Session recorded for baseline monitoring")
 
     # ── Step 5: Evidence-based confidence ──────────────────────────────────────
     evidence = EvidenceLedger(
@@ -581,22 +626,39 @@ def analyze_with_agent(
     )
     confidence = compute_confidence(evidence)
 
-    # ── Step 6: Decision engine ────────────────────────────────────────────────
-    decision = decide_action(confidence)
-
-    # ── Step 7: Build timeline and severity ────────────────────────────────────
+    # ── Step 6: Build timeline and severity (needed by decision engine) ────────
     timeline = build_timeline(correlation, current_record)
     severity = compute_severity(
         compound.compound_anomaly_score,
         correlation.correlation_depth,
         len(compound.compound_mitre_mappings),
-        hypothesis
+        threat_intel_score
     )
 
+    # ── Step 7: Decision engine (factors in severity) ─────────────────────────
+    decision = decide_action(confidence, severity)
+
+    # (timeline and severity already computed above for decision engine)
+
     # ── Step 8: Structured incident ────────────────────────────────────────────
+    if pattern_name == "BRUTE_FORCE":
+        itype = "Brute Force Attack Attempt"
+    elif pattern_name == "SUSPICIOUS_EXECUTION_CHAIN":
+        itype = "Suspicious Execution Chain"
+    elif pattern_name == "PRIVILEGE_ESCALATION_SPIKE":
+        itype = "Privilege Escalation Attempt"
+    elif actual_depth == 0:
+        itype = "Single Session Activity"
+    elif actual_depth == 1:
+        itype = "Repeated Suspicious Activity"
+    elif actual_depth == 2:
+        itype = "Correlated Attack Campaign"
+    else:
+        itype = "Multi-Stage Attack"
+
     incident = {
         "incident_id": str(uuid.uuid4()),
-        "incident_type": hypothesis or ("correlated_multi_session" if correlation.is_correlated else "single_session"),
+        "incident_type": itype,
         "timeline": timeline,
         "entities": list(dict.fromkeys([entity_id] + [s.entity_id for s in correlation.correlated_sessions])),
         "severity": severity,
@@ -616,7 +678,7 @@ def analyze_with_agent(
 
     # ── Step 10: Return structured response ────────────────────────────────────
     return {
-        "anomaly_score": individual_anomaly,
+        "anomaly_score": effective_anomaly,
         "compound_anomaly_score": compound.compound_anomaly_score,
         "mitre_mappings": individual_mitre,
         "compound_mitre_mappings": compound.compound_mitre_mappings,
@@ -627,7 +689,7 @@ def analyze_with_agent(
         "decision": decision,
         "why_flagged": why_flagged,
         "correlation_depth": correlation.correlation_depth,
-        "campaign_pattern": hypothesis,
+        "campaign_pattern": hypothesis or pattern_name,
         "entities": incident["entities"],
         "llm_explanation": llm_explanation,
         "detection_improvement": compound.improvement_detail or None,

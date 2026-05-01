@@ -33,7 +33,7 @@ from backend.processing.event_extractor import extract_events, events_to_sequenc
 from backend.processing.session_builder import build_sessions, sessions_summary
 from backend.processing.threat_intel import enrich_events
 from backend.models.attack_graph import build_attack_graph, attack_graph_summary
-from backend.models.lstm_model import score_sequence
+from backend.models.lstm_model import score_sequence, score_network_flow, is_network_flow_model_loaded
 from backend.reasoning.llm_agent import investigate_logs
 from backend.rag.rag_engine import retrieve_context
 from backend.incident_report import generate_report
@@ -195,6 +195,76 @@ def root():
     }
 
 
+def _process_raw_logs(raw_logs: str):
+    """
+    Detects if input is network flow CSV or standard logs, and processes accordingly.
+    Returns: (normalized_logs, events, event_sequence_ints, event_sequence_types, anomaly_score)
+    """
+    from backend.processing.event_extractor import SecurityEvent
+    
+    # Check if network flow CSV by looking for typical CIC-IDS2017 headers
+    first_line = raw_logs.split('\\n')[0].lower()
+    is_network_flow = 'destination port' in first_line or 'flow duration' in first_line
+
+    if is_network_flow:
+        import pandas as pd
+        import io
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        try:
+            df = pd.read_csv(io.StringIO(raw_logs))
+            # drop non numeric
+            drop_cols = [c for c in df.columns if df[c].dtype == object]
+            features = df.drop(columns=drop_cols).apply(pd.to_numeric, errors="coerce").fillna(0).values
+            
+            if is_network_flow_model_loaded():
+                anomaly_score = score_network_flow(features)
+            else:
+                anomaly_score = 0.0
+                
+            # Create a mock sequence for the rest of the pipeline
+            normalized_logs = [{"raw": "Network flow traffic", "timestamp": None}]
+            # Determine MITRE mapping based on score
+            mitre_hint = "T1071 Application Layer Protocol" if anomaly_score > 0.8 else None
+            event_type = "SUSPICIOUS_EXEC" if anomaly_score > 0.8 else "NORMAL"
+            event_code = 6 if anomaly_score > 0.8 else 0
+            
+            from datetime import datetime, timezone
+            events = [
+                SecurityEvent(
+                    event_type=event_type,
+                    event_code=event_code,
+                    source_ip="NetworkFlow",
+                    dest_ip="NetworkFlow",
+                    user="Unknown",
+                    hostname="Unknown",
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                    description=f"Network flow batch ({len(df)} records) with anomaly score {anomaly_score:.2f}",
+                    raw="Network flow traffic",
+                    mitre_hint=mitre_hint,
+                    severity="high" if anomaly_score > 0.8 else "low"
+                )
+            ]
+            event_sequence_ints = [e.event_code for e in events]
+            event_sequence_types = [e.event_type for e in events]
+            return normalized_logs, events, event_sequence_ints, event_sequence_types, anomaly_score
+            
+        except Exception as e:
+            logger.error(f"Failed to parse network flow CSV: {e}")
+            # Fall back to standard parsing
+            pass
+
+    # Standard text log parsing
+    normalized_logs = normalize_logs(raw_logs)
+    events = extract_events(normalized_logs)
+    event_sequence_ints = events_to_sequence(events)
+    event_sequence_types = [e.event_type for e in events]
+    anomaly_score = score_sequence(event_sequence_ints)
+    
+    return normalized_logs, events, event_sequence_ints, event_sequence_types, anomaly_score
+
+
 # ── Main investigation endpoint ───────────────────────────────────────────────
 @app.post("/investigate", response_model=InvestigateResponse)
 async def investigate(
@@ -220,20 +290,11 @@ async def investigate(
     """
     raw_logs = request.logs
 
-    # ── Step 1: Log Normalization ─────────────────────────────────────────
-    normalized_logs = normalize_logs(raw_logs)
+    # ── Steps 1-4: Parse, Extract, Session Build, LSTM Scoring ────────────
+    normalized_logs, events, event_sequence_ints, event_sequence_types, anomaly_score = _process_raw_logs(raw_logs)
 
-    # ── Step 2: Event Extraction ──────────────────────────────────────────
-    events = extract_events(normalized_logs)
-    event_sequence_ints = events_to_sequence(events)
-    event_sequence_types = [e.event_type for e in events]
-
-    # ── Step 3: Session Building ──────────────────────────────────────────
     sessions = build_sessions(events)
     session_data = sessions_summary(sessions)
-
-    # ── Step 4: LSTM Anomaly Detection ────────────────────────────────────
-    anomaly_score = score_sequence(event_sequence_ints)
 
     # ── Step 5: Threat Intelligence Enrichment ────────────────────────────
     ti_report = enrich_events(events)
@@ -342,11 +403,8 @@ async def investigate_with_agent(
 
     raw_logs = request.logs
 
-    # ── Steps 1-3: Parse, Extract, Session Build ─────────────────────────
-    normalized_logs = normalize_logs(raw_logs)
-    events = extract_events(normalized_logs)
-    event_sequence_ints = events_to_sequence(events)
-    event_sequence_types = [e.event_type for e in events]
+    # ── Steps 1-4: Parse, Extract, Session Build, LSTM Scoring ───────────
+    normalized_logs, events, event_sequence_ints, event_sequence_types, anomaly_score = _process_raw_logs(raw_logs)
     sessions = build_sessions(events)
 
     # ── Auto-detect entity_id if not provided ────────────────────────────
@@ -368,8 +426,7 @@ async def investigate_with_agent(
 
     timestamp = request.timestamp or _dt.now(_tz.utc).isoformat()
 
-    # ── Steps 4-9: Run existing pipeline (LSTM, TI, RAG, LLM, Report) ───
-    anomaly_score = score_sequence(event_sequence_ints)
+    # ── Steps 5-9: Run existing pipeline (TI, RAG, LLM, Report) ──────────
     ti_report = enrich_events(events)
     ti_summary = ti_report.summary_text()
     mitre_query = get_mitre_query(events)
@@ -431,6 +488,7 @@ async def investigate_with_agent(
         timestamp=timestamp,
         events=events,
         threat_intel_score=ti_report.max_risk_score / 100.0,
+        anomaly_score=anomaly_score
     )
 
     # Attach the pipeline report for full context

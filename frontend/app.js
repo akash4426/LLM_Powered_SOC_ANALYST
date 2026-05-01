@@ -259,9 +259,15 @@ function loadFileContent(file) {
     const name = file.name.toLowerCase();
 
     if (name.endsWith('.csv')) {
-      // Convert CSV to readable log text
-      text = parseCSV(text);
-      feedEntry(`CSV parsed → ${text.split('\n').length} log lines`, 'feed-ok');
+      // Check if it's a network flow CSV (like CIC-IDS2017)
+      const firstLine = text.split('\n')[0] || '';
+      if (firstLine.toLowerCase().includes('destination port') || firstLine.toLowerCase().includes('flow duration')) {
+        feedEntry(`Network Flow CSV detected → ${(text.split('\n').length - 1)} flows`, 'feed-ok');
+      } else {
+        // Convert generic CSV to readable log text
+        text = parseCSV(text);
+        feedEntry(`CSV parsed → ${text.split('\n').length} log lines`, 'feed-ok');
+      }
     } else {
       feedEntry(`Loaded: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`, 'feed-ok');
     }
@@ -577,8 +583,15 @@ async function investigate() {
     if (agentMode && data.correlation_depth > 0) {
       feedEntry(`Agent: ${data.correlation_depth} sessions correlated`, 'feed-found');
       if (data.campaign_pattern) {
-        feedEntry(`Agent: campaign → ${data.campaign_pattern}`, 'feed-found');
+        feedEntry(`Agent: campaign → ${data.campaign_pattern.replace(/_/g, ' ')}`, 'feed-found');
       }
+    }
+    if (agentMode && data.decision) {
+      const decClass = data.decision === 'AUTO_REMEDIATE' ? 'feed-err' : data.decision === 'ESCALATE_L2' ? 'feed-warn' : 'feed-info';
+      feedEntry(`Agent decision: ${data.decision.replace(/_/g, ' ')} (${((data.confidence ?? 0) * 100).toFixed(0)}%)`, decClass);
+    }
+    if (agentMode && data.why_flagged?.length > 0) {
+      data.why_flagged.forEach(r => feedEntry(`⚑ ${r}`, 'feed-found'));
     }
 
   } catch (err) {

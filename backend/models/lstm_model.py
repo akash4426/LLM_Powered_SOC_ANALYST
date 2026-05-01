@@ -267,3 +267,128 @@ def score_sequence(sequence: List[int]) -> float:
     span = max(_threshold_attack - _threshold_normal, 0.1)
     normalised = (raw_loss - _threshold_normal) / span
     return round(_clip01(normalised), 4)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TRAINED NETWORK FLOW LSTM MODEL (from train_lstm.py)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+NETWORK_FLOW_MODEL_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "models", "lstm_network_flow.pt"
+)
+
+_nf_model = None          # NetworkFlowLSTMAutoencoder instance
+_nf_threshold: float = 1.0
+_nf_mean_err: float = 0.0
+_nf_std_err: float = 1.0
+_nf_scaler_mean = None    # np.ndarray
+_nf_scaler_scale = None   # np.ndarray
+_nf_num_features: int = 0
+_nf_seq_length: int = 20
+
+
+def _load_network_flow_model():
+    """Lazy-load trained network flow LSTM model."""
+    global _nf_model, _nf_threshold, _nf_mean_err, _nf_std_err
+    global _nf_scaler_mean, _nf_scaler_scale, _nf_num_features, _nf_seq_length
+
+    if _nf_model is not None:
+        return _nf_model
+
+    if not TORCH_AVAILABLE or not os.path.exists(NETWORK_FLOW_MODEL_PATH):
+        return None
+
+    try:
+        from backend.models.train_lstm import NetworkFlowLSTMAutoencoder
+    except ImportError:
+        return None
+
+    checkpoint = torch.load(NETWORK_FLOW_MODEL_PATH, map_location="cpu", weights_only=False)
+    _nf_num_features = checkpoint["num_features"]
+    _nf_seq_length = checkpoint.get("seq_length", 20)
+    _nf_threshold = checkpoint["threshold"]
+    _nf_mean_err = checkpoint.get("mean_error", 0.0)
+    _nf_std_err = checkpoint.get("std_error", 1.0)
+
+    model = NetworkFlowLSTMAutoencoder(num_features=_nf_num_features)
+    model.load_state_dict(checkpoint["model_state_dict"])
+    model.eval()
+    _nf_model = model
+
+    # Load scaler parameters
+    if "scaler_mean" in checkpoint and "scaler_scale" in checkpoint:
+        _nf_scaler_mean = np.array(checkpoint["scaler_mean"], dtype=np.float32)
+        _nf_scaler_scale = np.array(checkpoint["scaler_scale"], dtype=np.float32)
+
+    return _nf_model
+
+
+def score_network_flow(features: "np.ndarray") -> float:
+    """
+    Score a network flow feature matrix using the trained LSTM Autoencoder.
+
+    Args:
+        features: np.ndarray of shape (num_rows, num_features) — raw (unscaled)
+                  network flow feature values. Rows should be temporally ordered.
+
+    Returns:
+        float in [0.0, 1.0]: anomaly score
+          0.0 = completely normal
+          1.0 = highly anomalous
+
+    Falls back to 0.0 if the trained model is not available.
+    """
+    if np is None:
+        return 0.0
+
+    model = _load_network_flow_model()
+    if model is None:
+        return 0.0
+
+    features = np.array(features, dtype=np.float32)
+    if features.ndim == 1:
+        features = features.reshape(1, -1)
+
+    # Scale using saved scaler parameters
+    if _nf_scaler_mean is not None and _nf_scaler_scale is not None:
+        # Pad or truncate feature columns to match training
+        if features.shape[1] < len(_nf_scaler_mean):
+            pad_width = len(_nf_scaler_mean) - features.shape[1]
+            features = np.pad(features, ((0, 0), (0, pad_width)), constant_values=0)
+        elif features.shape[1] > len(_nf_scaler_mean):
+            features = features[:, :len(_nf_scaler_mean)]
+
+        scale = _nf_scaler_scale.copy()
+        scale[scale == 0] = 1.0  # avoid divide-by-zero
+        features = (features - _nf_scaler_mean) / scale
+        features = np.clip(features, -10, 10)
+
+    # Create sequence: use sliding window or pad to seq_length
+    if len(features) >= _nf_seq_length:
+        # Use last seq_length rows as one sequence
+        seq = features[-_nf_seq_length:]
+    else:
+        # Pad with zeros (first rows)
+        pad = np.zeros((_nf_seq_length - len(features), features.shape[1]), dtype=np.float32)
+        seq = np.vstack([pad, features])
+
+    tensor = torch.tensor(seq, dtype=torch.float32).unsqueeze(0)  # (1, L, F)
+
+    with torch.no_grad():
+        error = model.reconstruction_error(tensor).item()
+
+    # Normalise to [0, 1] using threshold calibration
+    # Errors below threshold → low score; errors above → approach 1.0
+    if _nf_std_err > 0:
+        normalised = (error - _nf_mean_err) / (3 * _nf_std_err)
+    else:
+        normalised = error / max(_nf_threshold, 0.01)
+
+    return round(_clip01(normalised), 4)
+
+
+def is_network_flow_model_loaded() -> bool:
+    """Check if the trained network flow LSTM model is available."""
+    return _load_network_flow_model() is not None
+
