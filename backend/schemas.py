@@ -88,3 +88,57 @@ class InvestigateResponse(BaseModel):
 
     # Optional warning when fallback logic is used (e.g. LLM unavailable)
     llm_warning: Optional[str] = None
+
+
+# ── Agentic AI Layer Models ──────────────────────────────────────────────────
+
+class AgentLogRequest(BaseModel):
+    """Request body for POST /investigate/agent"""
+    logs: str = Field(
+        ...,
+        description="Raw security logs (multi-line text, JSON array, or JSON Lines)",
+        min_length=1,
+    )
+    entity_id: Optional[str] = Field(
+        default=None,
+        description="Entity identifier (IP/user/host). Auto-detected from logs if omitted.",
+    )
+    timestamp: Optional[str] = Field(
+        default=None,
+        description="ISO-8601 timestamp for this session. Defaults to current time.",
+    )
+
+
+class AgentAnalysisResponse(BaseModel):
+    """Response from the Agentic AI Layer — incident-level intelligence."""
+
+    # Individual session scores (from existing pipeline)
+    anomaly_score: float
+    compound_anomaly_score: Optional[float] = None
+
+    # MITRE mappings
+    mitre_mappings: List[str] = Field(default_factory=list)
+    compound_mitre_mappings: List[str] = Field(default_factory=list)
+
+    # Cross-session correlation
+    correlated_timeline: List[Dict[str, Any]] = Field(default_factory=list)
+    correlation_depth: int = 0
+    campaign_pattern: Optional[str] = None
+
+    # Incident classification
+    incident_id: str = ""
+    incident_type: str = "single_session"
+    severity: str = "LOW"
+    confidence: float = 0.0
+    decision: str = "MONITOR"
+    why_flagged: List[str] = Field(default_factory=list)
+    entities: List[str] = Field(default_factory=list)
+
+    # LLM-generated explanation (narrative only)
+    llm_explanation: str = ""
+
+    # Shows improvement from compound analysis
+    detection_improvement: Optional[str] = None
+
+    # Original pipeline report (full InvestigateResponse data)
+    pipeline_report: Optional[Dict[str, Any]] = None

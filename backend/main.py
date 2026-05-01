@@ -27,7 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional as _Optional
 
-from backend.schemas import LogRequest, InvestigateResponse
+from backend.schemas import LogRequest, InvestigateResponse, AgentLogRequest, AgentAnalysisResponse
 from backend.ingestion.log_normalizer import normalize_logs
 from backend.processing.event_extractor import extract_events, events_to_sequence, get_mitre_query
 from backend.processing.session_builder import build_sessions, sessions_summary
@@ -37,6 +37,7 @@ from backend.models.lstm_model import score_sequence
 from backend.reasoning.llm_agent import investigate_logs
 from backend.rag.rag_engine import retrieve_context
 from backend.incident_report import generate_report
+from backend.reasoning.agent_layer import analyze_with_agent, get_memory_store
 from backend.evaluation.evaluator import run_evaluation as _run_evaluation
 
 # Authentication imports
@@ -88,11 +89,13 @@ def health_check():
             "session_building",
             "lstm_anomaly_detection",
             "threat_intel_enrichment",
-            "mitre_rag_retrieval",       # <— RAG step, now explicit
+            "mitre_rag_retrieval",
             "llm_investigation",
             "attack_graph_reconstruction",
             "incident_report_generation",
+            "agent_correlation",          # Agentic AI Layer
         ],
+        "agent_entities_tracked": len(get_memory_store().get_all_entities()),
     }
 
 
@@ -311,6 +314,129 @@ async def investigate(
     report["investigation"] = json.dumps(llm_output)
 
     return InvestigateResponse(**report)
+
+
+# ── Agentic AI Layer endpoint ─────────────────────────────────────────────────
+@app.post("/investigate/agent", response_model=AgentAnalysisResponse)
+async def investigate_with_agent(
+    request: AgentLogRequest,
+    current_user: TokenData = Depends(get_current_user),
+):
+    """
+    Full SOC investigation pipeline + Agentic AI correlation layer.
+
+    **Requires JWT authentication.**
+
+    Runs the complete pipeline (Steps 1-9), then applies the Agent Layer:
+      - Stores session in entity memory
+      - Correlates across historical sessions for the same entity
+      - Applies compound intelligence (re-runs LSTM + RAG on combined sequences)
+      - Builds structured timeline and incident
+      - Computes deterministic severity and confidence
+      - Generates LLM explanation (narrative only)
+
+    Submit multiple requests for the same entity_id to see cross-session
+    correlation in action.
+    """
+    from datetime import datetime as _dt, timezone as _tz
+
+    raw_logs = request.logs
+
+    # ── Steps 1-3: Parse, Extract, Session Build ─────────────────────────
+    normalized_logs = normalize_logs(raw_logs)
+    events = extract_events(normalized_logs)
+    event_sequence_ints = events_to_sequence(events)
+    event_sequence_types = [e.event_type for e in events]
+    sessions = build_sessions(events)
+
+    # ── Auto-detect entity_id if not provided ────────────────────────────
+    entity_id = request.entity_id
+    if not entity_id:
+        # Use most common source_ip, then user, then hostname
+        from collections import Counter
+        ips = [e.source_ip for e in events if e.source_ip]
+        users = [e.user for e in events if e.user]
+        hosts = [e.hostname for e in events if e.hostname]
+        if ips:
+            entity_id = Counter(ips).most_common(1)[0][0]
+        elif users:
+            entity_id = Counter(users).most_common(1)[0][0]
+        elif hosts:
+            entity_id = Counter(hosts).most_common(1)[0][0]
+        else:
+            entity_id = "unknown_entity"
+
+    timestamp = request.timestamp or _dt.now(_tz.utc).isoformat()
+
+    # ── Steps 4-9: Run existing pipeline (LSTM, TI, RAG, LLM, Report) ───
+    anomaly_score = score_sequence(event_sequence_ints)
+    ti_report = enrich_events(events)
+    ti_summary = ti_report.summary_text()
+    mitre_query = get_mitre_query(events)
+    rag_context = retrieve_context(mitre_query)
+    rag_snippets = [s.strip() for s in rag_context.split("\n\n") if s.strip()]
+    graph = build_attack_graph(events)
+    graph_summary = attack_graph_summary(graph)
+
+    llm_warning = ""
+    try:
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(
+            investigate_logs,
+            log_text=raw_logs,
+            event_sequence=event_sequence_types,
+            anomaly_score=anomaly_score,
+            threat_intel_summary=ti_summary,
+            attack_graph_summary=graph_summary,
+            rag_context=rag_context,
+        )
+        llm_output = future.result(timeout=60.0)
+        executor.shutdown(wait=False)
+    except concurrent.futures.TimeoutError:
+        llm_warning = "LLM generation timed out."
+        llm_output = {
+            "attack_stage": "Unknown", "mitre_technique": ["Unknown"],
+            "severity": "MEDIUM", "confidence": "50%",
+            "explanation": "LLM timed out.",
+            "recommended_actions": ["Retry or check API status."],
+        }
+    except Exception as e:
+        llm_warning = f"LLM unavailable: {e}"
+        llm_output = {
+            "attack_stage": "Unknown", "mitre_technique": ["Unknown"],
+            "severity": "MEDIUM", "confidence": "50%",
+            "explanation": "LLM could not execute.",
+            "recommended_actions": ["Check API key and connection."],
+        }
+
+    session_data = sessions_summary(sessions)
+    pipeline_report = generate_report(
+        sessions=session_data["sessions"],
+        anomaly_score=anomaly_score,
+        threat_intel=ti_report.to_dict(),
+        attack_graph=graph,
+        llm_parsed=llm_output,
+        raw_logs=raw_logs,
+        rag_snippets=rag_snippets,
+        mitre_query=mitre_query,
+        events=events,
+    )
+    if llm_warning:
+        pipeline_report["llm_warning"] = llm_warning
+
+    # ── Step 10: Agentic AI Layer ─────────────────────────────────────────
+    agent_result = analyze_with_agent(
+        sequence=event_sequence_ints,
+        entity_id=entity_id,
+        timestamp=timestamp,
+        events=events,
+        threat_intel_score=ti_report.max_risk_score / 100.0,
+    )
+
+    # Attach the pipeline report for full context
+    agent_result["pipeline_report"] = pipeline_report
+
+    return AgentAnalysisResponse(**agent_result)
 
 
 # ── Auxiliary endpoints ───────────────────────────────────────────────────────

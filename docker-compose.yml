@@ -1,0 +1,100 @@
+version: '3.8'
+
+services:
+  # FastAPI Backend Service
+  backend:
+    # Build from local Dockerfile
+    build:
+      context: .
+      dockerfile: Dockerfile
+    
+    # Container name
+    container_name: soc_analyst_backend
+    
+    # Restart policy
+    restart: unless-stopped
+    
+    # Port mapping: host:container
+    ports:
+      - "8000:8000"
+    
+    # Environment variables
+    environment:
+      # LLM Configuration
+      OPEN_ROUTER_API: "${OPEN_ROUTER_API:-your-api-key}"
+      
+      # JWT Configuration
+      JWT_SECRET_KEY: "${JWT_SECRET_KEY:-change-this-in-production-use-long-random-string}"
+      JWT_ALGORITHM: "HS256"
+      JWT_EXPIRE_MINUTES: "60"
+      
+      # Database Configuration
+      VECTOR_DB_PATH: "/app/vector_db/chroma.sqlite3"
+      
+      # Logging
+      LOG_LEVEL: "INFO"
+      
+      # Python settings
+      PYTHONUNBUFFERED: "1"
+    
+    # Volume mounts for persistence
+    volumes:
+      # Persist vector database
+      - ./vector_db:/app/vector_db:rw
+      
+      # Persist model cache (optional)
+      - ./models:/app/models:rw
+      
+      # Mount source for development (comment out for production)
+      - .:/app:ro
+    
+    # Depends on health check (can add more services here)
+    depends_on:
+      - vector-db-setup
+    
+    # Resource limits (adjust for your system)
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '1.0'
+          memory: 1G
+    
+    # Network
+    networks:
+      - soc-network
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Vector Database Setup Service
+  # Ensures vector DB directory exists and is accessible
+  vector-db-setup:
+    image: busybox:latest
+    container_name: soc_analyst_db_setup
+    
+    # Ensure vector_db directory exists with proper permissions
+    command: sh -c "mkdir -p /app/vector_db && chmod 777 /app/vector_db"
+    
+    volumes:
+      - ./vector_db:/app/vector_db:rw
+    
+    networks:
+      - soc-network
+
+# Network definition
+networks:
+  soc-network:
+    driver: bridge
+
+# Volumes (optional - for named volumes)
+volumes:
+  vector_db:
+    driver: local

@@ -7,6 +7,7 @@
 
 const API = 'http://localhost:8000';
 const TIMEOUT_MS = 300_000; // 5 minutes
+let agentMode = true; // Agent mode on by default
 
 /* ─── JWT Token Management (Silent Background) ─────────────── */
 let authToken = localStorage.getItem('authToken') || null;
@@ -151,7 +152,22 @@ async function initAPI() {
   }
   
   // Then check periodically every 5 seconds
-  setInterval(checkAPI, 5000);
+  setInterval(async () => {
+    await checkAPI();
+    // Update agent entity count from health endpoint
+    if (agentMode) {
+      try {
+        const hRes = await fetch(`${API}/health`, { signal: AbortSignal.timeout(2000) });
+        if (hRes.ok) {
+          const hData = await hRes.json();
+          const countEl = document.getElementById('agent-entity-count');
+          if (countEl && hData.agent_entities_tracked !== undefined) {
+            countEl.textContent = hData.agent_entities_tracked;
+          }
+        }
+      } catch(_) {}
+    }
+  }, 5000);
 }
 
 /* ─── Detection log feed ─────────────────────────────────────── */
@@ -404,34 +420,37 @@ function showState(id) {
 }
 
 /* ─── Pipeline step animation ────────────────────────────────── */
-const STEP_DELAYS = [600, 1200, 2200, 3000, 4000, 6000, 9000];
-const STEP_LABELS = ['PARSE', 'EXTRACT', 'LSTM', 'INTEL', 'RAG', 'LLM…', 'GRAPH'];
+const STEP_DELAYS = [600, 1200, 2200, 3000, 4000, 6000, 9000, 11000];
+const STEP_LABELS = ['PARSE', 'EXTRACT', 'LSTM', 'INTEL', 'RAG', 'LLM…', 'GRAPH', 'AGENT'];
 
 function startPipelineAnimation() {
+  const totalSteps = agentMode ? 8 : 7;
+  // Show/hide agent step
+  const agentStep = document.getElementById('ps-7');
+  if (agentStep) agentStep.classList.toggle('hidden', !agentMode);
+
   // Reset all steps
-  for (let i = 0; i < 7; i++) {
+  for (let i = 0; i < totalSteps; i++) {
     const el = document.getElementById(`ps-${i}`);
     if (el) {
-      el.className = 'pipe-step';
+      el.className = el.className.includes('agent-step') ? 'pipe-step agent-step' : 'pipe-step';
       el.querySelector('.pipe-status').textContent = '';
     }
   }
 
-  for (let i = 0; i < 7; i++) {
+  for (let i = 0; i < totalSteps; i++) {
     const delay = STEP_DELAYS[i];
     setTimeout(() => {
-      // mark previous as done
       if (i > 0) {
         const prev = document.getElementById(`ps-${i - 1}`);
         if (prev) {
-          prev.className = 'pipe-step ps-done';
+          prev.classList.add('ps-done');
           prev.querySelector('.pipe-status').textContent = 'DONE';
         }
       }
-      // mark current as active
       const cur = document.getElementById(`ps-${i}`);
       if (cur) {
-        cur.className = 'pipe-step ps-active';
+        cur.classList.add('ps-active');
         cur.querySelector('.pipe-status').textContent = STEP_LABELS[i];
       }
     }, delay);
@@ -439,10 +458,11 @@ function startPipelineAnimation() {
 }
 
 function finishPipelineAnimation() {
-  for (let i = 0; i < 7; i++) {
+  const totalSteps = agentMode ? 8 : 7;
+  for (let i = 0; i < totalSteps; i++) {
     const el = document.getElementById(`ps-${i}`);
     if (el) {
-      el.className = 'pipe-step ps-done';
+      el.classList.add('ps-done');
       el.querySelector('.pipe-status').textContent = 'DONE';
     }
   }
@@ -484,15 +504,24 @@ async function investigate() {
 
   feedEntry('Investigation started', 'feed-info');
   feedEntry(`Input: ${logs.split('\n').length} lines`, 'feed-info');
+  if (agentMode) feedEntry('Agent mode: ON', 'feed-found');
 
   const ctrl    = new AbortController();
   const timeout = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
 
+  // Build request body — add entity_id if in agent mode
+  const endpoint = agentMode ? `${API}/investigate/agent` : `${API}/investigate`;
+  const body = { logs };
+  if (agentMode) {
+    const eid = document.getElementById('entity-id-input')?.value?.trim();
+    if (eid) body.entity_id = eid;
+  }
+
   try {
-    const res = await fetch(`${API}/investigate`, {
+    const res = await fetch(endpoint, {
       method:  'POST',
       headers: getAuthHeaders(),
-      body:    JSON.stringify({ logs }),
+      body:    JSON.stringify(body),
       signal:  ctrl.signal,
     });
 
@@ -502,11 +531,10 @@ async function investigate() {
       if (res.status === 401 || res.status === 403) {
         feedEntry('Authentication expired. Retrying...', 'feed-warn');
         await silentLogin();
-        // Retry with new token
-        const retryRes = await fetch(`${API}/investigate`, {
+        const retryRes = await fetch(endpoint, {
           method:  'POST',
           headers: getAuthHeaders(),
-          body:    JSON.stringify({ logs }),
+          body:    JSON.stringify(body),
           signal:  ctrl.signal,
         });
         
@@ -516,8 +544,12 @@ async function investigate() {
         
         const data = await retryRes.json();
         finishPipelineAnimation();
-        rawReport = data.investigation || data.llm_explanation || '';
-        renderReport(data);
+        if (agentMode) {
+          renderAgentReport(data);
+        } else {
+          rawReport = data.investigation || data.llm_explanation || '';
+          renderReport(data);
+        }
         showState('report');
         document.getElementById('api-status')?.classList.add('online');
         document.getElementById('status-text').textContent = 'API ONLINE';
@@ -530,14 +562,24 @@ async function investigate() {
 
     const data = await res.json();
     finishPipelineAnimation();
-    rawReport = data.investigation || data.llm_explanation || '';
-    renderReport(data);
+
+    if (agentMode) {
+      renderAgentReport(data);
+    } else {
+      rawReport = data.investigation || data.llm_explanation || '';
+      renderReport(data);
+    }
     showState('report');
 
-    // Mark API online after a successful call
     document.getElementById('api-status')?.classList.add('online');
     document.getElementById('status-text').textContent = 'API ONLINE';
     feedEntry(`Investigation complete — severity: ${data.severity || '?'}`, 'feed-ok');
+    if (agentMode && data.correlation_depth > 0) {
+      feedEntry(`Agent: ${data.correlation_depth} sessions correlated`, 'feed-found');
+      if (data.campaign_pattern) {
+        feedEntry(`Agent: campaign → ${data.campaign_pattern}`, 'feed-found');
+      }
+    }
 
   } catch (err) {
     clearTimeout(timeout);
@@ -806,6 +848,224 @@ function copyReport() {
   });
 }
 
+/* ─── Agent Mode Toggle ──────────────────────────────────────── */
+document.getElementById('agent-mode-toggle')?.addEventListener('change', (e) => {
+  agentMode = e.target.checked;
+  const config = document.getElementById('agent-config');
+  if (config) config.style.display = agentMode ? '' : 'none';
+  feedEntry(`Agent mode: ${agentMode ? 'ENABLED' : 'DISABLED'}`, agentMode ? 'feed-found' : 'feed-info');
+});
+
+/* ─── Agent Report Renderer ──────────────────────────────────── */
+function renderAgentReport(data) {
+  // Debug: log received data
+  console.log('[Agent Report] Received data:', {
+    correlation_depth: data.correlation_depth,
+    campaign_pattern: data.campaign_pattern,
+    incident_type: data.incident_type,
+    confidence: data.confidence,
+    decision: data.decision,
+    compound_anomaly_score: data.compound_anomaly_score,
+  });
+
+  // First, render the standard pipeline report from pipeline_report
+  const pr = data.pipeline_report || {};
+  renderReport(pr);
+
+  // Override top-level metrics with agent values
+  const sev = (data.severity || 'UNKNOWN').toUpperCase();
+  const pill = document.getElementById('severity-pill');
+  if (pill) {
+    pill.textContent = sev;
+    pill.className = `severity-pill sev-${sev}`;
+  }
+
+  // Update anomaly score to show agent compound score
+  const compoundAnomaly = data.compound_anomaly_score ?? data.anomaly_score ?? 0;
+  if (compoundAnomaly !== null && compoundAnomaly !== undefined) {
+    document.getElementById('m-anomaly').textContent = compoundAnomaly.toFixed(3);
+    setBar('m-anomaly-bar', Math.min(compoundAnomaly * 100, 100), severityColor(compoundAnomaly, 'anomaly'));
+  }
+
+  // Update confidence
+  const conf = data.confidence ?? 0;
+  if (conf !== null && conf !== undefined) {
+    document.getElementById('m-confidence').textContent = `${(conf * 100).toFixed(0)}%`;
+    setBar('m-confidence-bar', Math.min(conf * 100, 100), '#4a90d9');
+  }
+
+  // ── Show Agent Intelligence Panel ──
+  const agentPanel = document.getElementById('agent-panel');
+  if (agentPanel) {
+    agentPanel.classList.remove('hidden');
+
+    // Compound anomaly
+    const amCompound = document.getElementById('am-compound');
+    if (amCompound) {
+      const compScore = data.compound_anomaly_score ?? data.anomaly_score ?? 0;
+      amCompound.textContent = compScore.toFixed(4);
+      const barColor = severityColor(compScore, 'anomaly');
+      amCompound.style.color = barColor;
+      setBar('am-compound-bar', Math.min(compScore * 100, 100), barColor);
+    }
+
+    // Correlation depth — show as number or "Linked from previous"
+    const amDepth = document.getElementById('am-depth');
+    if (amDepth) {
+      const depth = data.correlation_depth ?? 0;
+      console.log('[Agent] Correlation depth value:', depth, typeof depth);
+      if (depth > 0) {
+        amDepth.textContent = `${depth} sessions`;
+        amDepth.style.color = 'var(--blue)';
+      } else {
+        amDepth.textContent = 'None';
+        amDepth.style.color = 'var(--text-2)';
+      }
+    }
+
+    // Campaign pattern — show detection or fallback
+    const amCampaign = document.getElementById('am-campaign');
+    if (amCampaign) {
+      const pattern = data.campaign_pattern || null;
+      console.log('[Agent] Campaign pattern value:', pattern, typeof pattern);
+      if (pattern && pattern !== 'None' && pattern !== '') {
+        const label = pattern.replace(/_/g, ' ').toUpperCase();
+        const badgeClass = sev === 'CRITICAL' ? 'cb-critical' : sev === 'HIGH' ? 'cb-high' : '';
+        amCampaign.innerHTML = `<span class="campaign-badge ${badgeClass}">${esc(label)}</span>`;
+        amCampaign.style.color = '';
+      } else {
+        amCampaign.textContent = 'No pattern';
+        amCampaign.style.color = 'var(--text-2)';
+      }
+    }
+
+    // Incident type
+    const amIncident = document.getElementById('am-incident');
+    if (amIncident) {
+      const itype = (data.incident_type || 'single_session').replace(/_/g, ' ');
+      const displayType = itype.charAt(0).toUpperCase() + itype.slice(1);
+      amIncident.textContent = displayType;
+      amIncident.style.color = itype.includes('single') ? 'var(--text-2)' : 'var(--green)';
+    }
+
+    // Decision with better styling
+    const amDecision = document.getElementById('am-decision');
+    if (amDecision) {
+      const decision = data.decision || 'MONITOR';
+      amDecision.textContent = decision.replace(/_/g, ' ');
+      const decisionColors = {
+        'AUTO_REMEDIATE': 'var(--red)',
+        'ESCALATE_L2': 'var(--amber)',
+        'MONITOR': 'var(--blue)'
+      };
+      const color = decisionColors[decision] || 'var(--text-1)';
+      amDecision.style.color = color;
+      amDecision.style.fontWeight = '700';
+      amDecision.title = `Decision: ${decision} (Confidence: ${((data.confidence ?? 0) * 100).toFixed(0)}%)`;
+    }
+
+    // Why Flagged
+    const whyFlaggedRow = document.getElementById('agent-why-flagged-row');
+    const whyFlaggedEl = document.getElementById('am-why-flagged');
+    if (whyFlaggedRow && whyFlaggedEl) {
+      const whyFlagged = data.why_flagged || [];
+      if (whyFlagged.length > 0) {
+        whyFlaggedRow.style.display = '';
+        whyFlaggedEl.innerHTML = whyFlagged.map(reason => 
+          `<div class="why-flagged-item">• ${esc(reason)}</div>`
+        ).join('');
+      } else {
+        whyFlaggedRow.style.display = 'none';
+      }
+    }
+
+    // Detection improvement
+    const improvEl = document.getElementById('agent-improvement');
+    const improvVal = document.getElementById('am-improvement');
+    if (improvEl && improvVal) {
+      if (data.detection_improvement && data.detection_improvement !== 'No improvement from compound analysis.') {
+        improvEl.style.display = '';
+        improvVal.textContent = data.detection_improvement;
+        improvVal.style.color = 'var(--green)';
+      } else {
+        improvEl.style.display = 'none';
+      }
+    }
+
+    // Entities
+    const amEntities = document.getElementById('am-entities');
+    if (amEntities) {
+      const entities = data.entities || [];
+      amEntities.innerHTML = entities.map(e =>
+        `<span class="graph-node">${esc(e)}</span>`
+      ).join(' ');
+    }
+  }
+
+  // ── Compound MITRE mappings ──
+  const compoundMitreSection = document.getElementById('r-compound-mitre-section');
+  const compoundMitreEl = document.getElementById('r-compound-mitre');
+  if (compoundMitreSection && compoundMitreEl) {
+    const compoundMitre = data.compound_mitre_mappings || [];
+    const individualMitre = data.mitre_mappings || [];
+    if (compoundMitre.length > 0) {
+      compoundMitreSection.classList.remove('hidden');
+      compoundMitreEl.innerHTML = compoundMitre.map(t => {
+        const isNew = !individualMitre.includes(t);
+        const cls = isNew ? 'mitre-tag-new' : 'mitre-tag-compound';
+        return `<span class="${cls}">${esc(t)}</span>`;
+      }).join('');
+    } else {
+      compoundMitreSection.classList.add('hidden');
+    }
+  }
+
+  // ── Correlated Timeline ──
+  const timelineSection = document.getElementById('r-timeline-section');
+  const timelineEl = document.getElementById('r-timeline');
+  if (timelineSection && timelineEl) {
+    const timeline = data.correlated_timeline || [];
+    if (timeline.length > 0) {
+      timelineSection.classList.remove('hidden');
+      const HIGH_TYPES = new Set(['PRIV_ESC', 'SUSPICIOUS_EXEC', 'LATERAL_MOVE', 'DEFENSE_EVADE', 'EXFILTRATION']);
+      const MED_TYPES = new Set(['LOGIN', 'OUTBOUND_CONN', 'RECON']);
+
+      timelineEl.innerHTML = '<div class="timeline-list">' + timeline.slice(0, 20).map(entry => {
+        const etype = entry.event_type || 'UNKNOWN';
+        const dotClass = HIGH_TYPES.has(etype) ? 'td-high' : MED_TYPES.has(etype) ? 'td-medium' : 'td-low';
+        const typeColor = HIGH_TYPES.has(etype) ? 'var(--red)' : MED_TYPES.has(etype) ? 'var(--amber)' : 'var(--green)';
+        return `<div class="timeline-entry">
+          <span class="timeline-dot ${dotClass}"></span>
+          <div class="timeline-content">
+            <span class="timeline-ts">${esc(entry.timestamp || 'N/A')}</span>
+            <span class="timeline-type" style="color:${typeColor}">${esc(etype)}</span>
+            <span class="timeline-desc">${esc(entry.description || '')}</span>
+            <span class="timeline-session">session: ${esc(entry.session_id || '?')}</span>
+          </div>
+        </div>`;
+      }).join('') + '</div>';
+    } else {
+      timelineSection.classList.add('hidden');
+    }
+  }
+
+  // ── Agent explanation ──
+  const agentExplSection = document.getElementById('r-agent-explanation-section');
+  const agentExplEl = document.getElementById('r-agent-explanation');
+  if (agentExplSection && agentExplEl) {
+    if (data.llm_explanation) {
+      agentExplSection.classList.remove('hidden');
+      agentExplEl.innerHTML = `<div class="explanation-text">${formatText(data.llm_explanation)}</div>`;
+    } else {
+      agentExplSection.classList.add('hidden');
+    }
+  }
+
+  // Update raw output
+  rawReport = JSON.stringify(data, null, 2);
+  document.getElementById('raw-body').textContent = rawReport;
+}
+
 /* ─── Keyboard shortcut (Enter to run) ──────────────────────── */
 document.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
@@ -817,11 +1077,9 @@ document.addEventListener('keydown', e => {
 /* ─── Init ────────────────────────────────────────────────────── */
 document.addEventListener('DOMContentLoaded', () => {
   updateCounts();
-  initAPI();  // Check API status with logging
-  
-  // Silently login in background
+  initAPI();
   silentLogin();
-  
   feedEntry('LSTM model: loaded', 'feed-ok');
+  feedEntry('Agent layer: active', 'feed-found');
   feedEntry('Ready — paste logs or select scenario', 'feed-sys');
 });

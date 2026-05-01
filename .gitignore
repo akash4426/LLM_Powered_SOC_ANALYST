@@ -1,90 +1,83 @@
-# ==============================
-# Environment Variables
-# ==============================
-
+# Environment variables
 .env
-.env.*
-*.env
+.env.local
+.env.*.local
 
-# ==============================
-# Python Virtual Environments
-# ==============================
-
-venv/
-.env/
-env/
-ENV/
-soc-llm/
-.conda/
-
-# ==============================
-# Conda
-# ==============================
-
-*.conda
-*.yml
-*.yaml
-conda-meta/
-
-# ==============================
-# Python Cache & Compiled Files
-# ==============================
-
+# Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*$py.class
 *.so
-
-# ==============================
-# Jupyter Notebooks
-# ==============================
-
-.ipynb_checkpoints/
-
-# ==============================
-# Logs
-# ==============================
-
-*.log
-
-# ==============================
-# macOS System Files
-# ==============================
-
-.DS_Store
-
-# ==============================
-# VS Code
-# ==============================
-
-.vscode/
-
-# ==============================
-# Frontend (React / Node)
-# ==============================
-
-node_modules/
-dist/
+.Python
+env/
+venv/
+ENV/
 build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
 
-# ==============================
-# Coverage / Testing
-# ==============================
+# Virtual environments
+.venv
+env.bak/
+venv.bak/
 
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.sublime-project
+*.sublime-workspace
+
+# Testing
+.pytest_cache/
 .coverage
-coverage.xml
 htmlcov/
+.tox/
+.hypothesis/
 
-# ==============================
-# Database / Local Files
-# ==============================
+# Logs
+*.log
+logs/
+server.log
 
-*.db
-*.sqlite3
+# Data & Models
+vector_db/
+data/*.npy
+data/*.csv
+*.pt
+*.pth
+*.bin
 
-# ==============================
-# ChromaDB / Vector Storage
-# ==============================
+# Results
+results/
 
-chroma/
+# Docker
+docker-compose.override.yml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.bak
+.cache/
+*.pyc

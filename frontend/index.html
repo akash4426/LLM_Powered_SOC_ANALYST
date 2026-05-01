@@ -26,7 +26,7 @@
         <span>SOC_ANALYST</span>
       </div>
       <span class="topbar-sep">|</span>
-      <span class="topbar-version">v2.0 · LSTM+RAG+LLM</span>
+      <span class="topbar-version">v3.0 · LSTM+RAG+LLM+Agent</span>
     </div>
     <div class="topbar-right">
       <div class="status-chip" id="api-status">
@@ -158,6 +158,35 @@
             <span class="stack-key">GRAPH</span>
             <span class="stack-val">NetworkX kill-chain</span>
           </div>
+          <div class="stack-row">
+            <span class="stack-key">AGENT</span>
+            <span class="stack-val">Cross-session correlator</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Agent Mode -->
+      <div class="module">
+        <div class="module-header">
+          <span class="module-label">AGENT MODE</span>
+          <label class="agent-toggle">
+            <input type="checkbox" id="agent-mode-toggle" checked />
+            <span class="agent-toggle-slider"></span>
+          </label>
+        </div>
+        <div class="agent-config" id="agent-config">
+          <div class="agent-field">
+            <label class="agent-field-label" for="entity-id-input">ENTITY ID</label>
+            <input type="text" id="entity-id-input" class="agent-input" placeholder="Auto-detect from logs" />
+          </div>
+          <div class="agent-info">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+            <span>Submit multiple sessions for the same entity to see cross-session correlation</span>
+          </div>
+          <div class="agent-memory-status">
+            <span class="agent-mem-label">ENTITIES TRACKED</span>
+            <span class="agent-mem-val" id="agent-entity-count">0</span>
+          </div>
         </div>
       </div>
 
@@ -218,6 +247,8 @@
               (OpenAI)</span><span class="pipe-status"></span></div>
           <div class="pipe-step" id="ps-6"><span class="pipe-num">07</span><span class="pipe-label">Attack graph +
               report</span><span class="pipe-status"></span></div>
+          <div class="pipe-step agent-step hidden" id="ps-7"><span class="pipe-num">08</span><span class="pipe-label">Agent correlation
+              + compound</span><span class="pipe-status"></span></div>
         </div>
         <div class="loading-elapsed">
           <span class="elapsed-label">ELAPSED</span>
@@ -285,6 +316,49 @@
           </div>
         </div>
 
+        <!-- Agent Intelligence Panel (only shown in agent mode) -->
+        <div class="agent-panel hidden" id="agent-panel">
+          <div class="agent-panel-header">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            <span>AGENT INTELLIGENCE</span>
+          </div>
+          <div class="agent-metrics">
+            <div class="agent-metric">
+              <div class="agent-metric-key">COMPOUND ANOMALY</div>
+              <div class="agent-metric-val" id="am-compound">—</div>
+              <div class="metric-bar-wrap"><div class="metric-bar" id="am-compound-bar"></div></div>
+            </div>
+            <div class="agent-metric">
+              <div class="agent-metric-key">CORRELATION DEPTH</div>
+              <div class="agent-metric-val" id="am-depth">—</div>
+            </div>
+            <div class="agent-metric">
+              <div class="agent-metric-key">CAMPAIGN PATTERN</div>
+              <div class="agent-metric-val" id="am-campaign">—</div>
+            </div>
+            <div class="agent-metric">
+              <div class="agent-metric-key">INCIDENT TYPE</div>
+              <div class="agent-metric-val" id="am-incident">—</div>
+            </div>
+            <div class="agent-metric">
+              <div class="agent-metric-key">DECISION</div>
+              <div class="agent-metric-val" id="am-decision">—</div>
+            </div>
+          </div>
+          <div class="agent-detail-row" id="agent-why-flagged-row" style="display:none">
+            <div class="agent-detail-label">WHY FLAGGED</div>
+            <div class="agent-detail-val" id="am-why-flagged">—</div>
+          </div>
+          <div class="agent-detail-row" id="agent-improvement" style="display:none">
+            <div class="agent-detail-label">DETECTION IMPROVEMENT</div>
+            <div class="agent-detail-val" id="am-improvement">—</div>
+          </div>
+          <div class="agent-detail-row" id="agent-entities-row">
+            <div class="agent-detail-label">ENTITIES INVOLVED</div>
+            <div class="agent-detail-val" id="am-entities">—</div>
+          </div>
+        </div>
+
         <!-- Two-column body -->
         <div class="report-body">
 
@@ -316,6 +390,14 @@
               <div class="r-section-body" id="r-rag">—</div>
             </div>
 
+            <!-- Agent: Compound MITRE (only in agent mode) -->
+            <div class="r-section hidden" id="r-compound-mitre-section">
+              <div class="r-section-head" style="border-left:2px solid var(--cyan,var(--blue));">
+                COMPOUND MITRE MAPPINGS (AGENT)
+              </div>
+              <div class="r-section-body" id="r-compound-mitre">—</div>
+            </div>
+
           </div>
 
           <!-- Right: LLM explanation + actions -->
@@ -328,6 +410,22 @@
             <div class="r-section r-section-full">
               <div class="r-section-head">RECOMMENDED RESPONSE</div>
               <div class="r-section-body response-list" id="r-response">—</div>
+            </div>
+
+            <!-- Agent: Correlated Timeline (only in agent mode) -->
+            <div class="r-section r-section-full hidden" id="r-timeline-section">
+              <div class="r-section-head" style="border-left:2px solid var(--cyan,var(--blue));">
+                CORRELATED ATTACK TIMELINE (AGENT)
+              </div>
+              <div class="r-section-body" id="r-timeline">—</div>
+            </div>
+
+            <!-- Agent: LLM Explanation (only in agent mode) -->
+            <div class="r-section r-section-full hidden" id="r-agent-explanation-section">
+              <div class="r-section-head" style="border-left:2px solid var(--cyan,var(--blue));">
+                AGENT INCIDENT NARRATIVE
+              </div>
+              <div class="r-section-body" id="r-agent-explanation">—</div>
             </div>
           </div>
 
