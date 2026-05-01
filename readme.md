@@ -236,11 +236,6 @@ DEFENSE_EVASION, EXFILTRATION
 
 ## 📡 API Reference
 
-### Base URL
-```
-http://localhost:8000
-```
-
 ### Authentication
 ```bash
 # Get token
