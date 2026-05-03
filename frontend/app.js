@@ -6,7 +6,7 @@
 ═════════════════════════════════════════════════════════════ */
 
 // Configuration: Update this with your Render backend URL once deployed
-const PROD_API_URL = 'https://your-render-backend-url.onrender.com';
+const PROD_API_URL = 'https://llm-powered-soc-analyst-1.onrender.com';
 const API = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') 
     ? 'http://localhost:8000' 
     : PROD_API_URL;
