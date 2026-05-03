@@ -641,7 +641,11 @@
     /* ══════════════════════════════════════════════════════
        RAG TESTER — JavaScript
     ══════════════════════════════════════════════════════ */
-    const API = 'http://localhost:8000';
+    // Configuration: Update this with your Render backend URL once deployed
+    const PROD_API_URL = 'https://your-render-backend-url.onrender.com';
+    const API = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') 
+        ? 'http://localhost:8000' 
+        : PROD_API_URL;
     let mode = 'auto';   // 'auto' | 'logs' | 'direct'
     let lastRawCtx = '';
     let animTimer = null;
@@ -798,7 +802,7 @@
         if (err.name === 'AbortError') {
           msg = 'Request timed out (60s). Is the backend running?';
         } else if (/fetch|failed/i.test(err.message)) {
-          msg = 'Cannot reach backend API at http://localhost:8000\nMake sure uvicorn is running:\n  uvicorn backend.main:app --reload';
+          msg = `Cannot reach backend API at ${API}\nMake sure your backend is running.`;
         } else {
           msg = err.message;
         }

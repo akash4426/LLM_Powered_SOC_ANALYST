@@ -5,7 +5,11 @@
    attack graph, MITRE techniques, LLM explanation + actions.
 ═════════════════════════════════════════════════════════════ */
 
-const API = 'http://localhost:8000';
+// Configuration: Update this with your Render backend URL once deployed
+const PROD_API_URL = 'https://your-render-backend-url.onrender.com';
+const API = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') 
+    ? 'http://localhost:8000' 
+    : PROD_API_URL;
 const TIMEOUT_MS = 300_000; // 5 minutes
 let agentMode = true; // Agent mode on by default
 
@@ -146,7 +150,7 @@ async function initAPI() {
   console.log('Checking API status...');
   const isOnline = await checkAPI();
   if (isOnline) {
-    feedEntry('API connected — http://localhost:8000', 'feed-ok');
+    feedEntry(`API connected — ${API}`, 'feed-ok');
   } else {
     feedEntry('API offline — start uvicorn on port 8000', 'feed-warn');
   }
