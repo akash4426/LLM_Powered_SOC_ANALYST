@@ -31,10 +31,10 @@ USER socanal
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# Expose port 8000 (FastAPI default)
-EXPOSE 8000
+# Expose port 7860 (Hugging Face Spaces default)
+EXPOSE 7860
 
 # Start FastAPI application with Uvicorn
 # Workers set to 1 for MacBook/low-resource environments
 # Can increase for production: --workers 4
-CMD uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1
+CMD uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-7860} --workers 1

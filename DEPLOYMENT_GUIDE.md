@@ -6,27 +6,33 @@ I have already modified your frontend code to dynamically switch between your lo
 
 ---
 
-## 1. Deploy the Backend to Render (Using Docker)
+## 1. Deploy the Backend to Hugging Face Spaces (FREE 16GB RAM)
 
-Using Docker is highly recommended as it avoids all Python version and package conflict issues. Your repository already includes a pre-configured `Dockerfile` based on a stable Python environment.
+Since this application utilizes PyTorch and Machine Learning models, it requires around 700MB of RAM. Standard free tiers (like Render's 512MB) will crash (OOMKilled). Hugging Face Spaces provides **16GB of RAM for free**, making it the perfect home for this backend.
 
 ### Steps:
-1. Ensure your code is pushed to a GitHub repository.
-2. Sign up or log into [Render](https://render.com/).
-3. Click on the **New +** button and select **Web Service**.
-4. Connect your GitHub account and select your `LLM_Powered_SOC_ANALYST` repository.
-5. Fill in the deployment details:
-   - **Name**: `soc-analyst-backend` (or any name you prefer)
-   - **Environment**: Select **`Docker`** (Instead of Python)
-   - **Region**: Choose the one closest to you.
-   - **Branch**: `main` (or whichever branch you are using)
-6. **Environment Variables**:
-   Click "Advanced" and add any environment variables your application requires (e.g., any API keys for LLMs like `OPENROUTER_API_KEY` or `OPENAI_API_KEY` that might be present in your `.env` file).
-7. Select the **Free** instance type (or a paid one if you need more RAM/CPU for the RAG vector DB).
-8. Click **Create Web Service**.
+1. Ensure your code is pushed to your GitHub repository.
+2. Sign up or log into [Hugging Face](https://huggingface.co/).
+3. Go to your profile and click **New Space** (or go to [https://huggingface.co/new-space](https://huggingface.co/new-space)).
+4. Fill in the Space details:
+   - **Space name**: `soc-analyst-backend` (or any name you prefer)
+   - **License**: Choose `MIT` or leave blank
+   - **Select the Space SDK**: Select **`Docker`**
+   - **Docker Template**: Select **`Blank`**
+   - **Space Hardware**: Free (16GB RAM, 2 CPU cores)
+5. Click **Create Space**.
+6. Once the space is created, you need to connect your GitHub repo to it:
+   - Hugging Face provides instructions on how to push your code via Git, but the easiest way is to connect your GitHub repository directly using GitHub Actions, or manually upload your files.
+   - *Alternatively, you can just clone your repo locally and push it to the Hugging Face git remote URL provided on the screen.*
+7. **Environment Variables**:
+   Go to the **Settings** tab of your Space, scroll down to **Variables and secrets**, and click **New secret**. Add:
+   - `OPEN_ROUTER_API`: (Your API key)
+   - `JWT_SECRET_KEY`: (Your secret string)
+8. The Space will automatically build your Docker container. Once it says "Running", click the **Options (⋮) button** -> **Embed this Space** to find your Direct URL. It will look something like `https://username-soc-analyst-backend.hf.space`.
+
 
 > [!NOTE] 
-> Render will take a few minutes to build and deploy. Once it's live, copy the URL provided by Render (it will look something like `https://soc-analyst-backend.onrender.com`).
+> Hugging Face will take a few minutes to build the Docker image. Once it says "Running", copy the "Direct URL" (it will look something like `https://username-soc-analyst-backend.hf.space`).
 
 ---
 
