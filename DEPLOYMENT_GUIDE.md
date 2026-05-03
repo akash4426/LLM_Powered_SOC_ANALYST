@@ -6,9 +6,9 @@ I have already modified your frontend code to dynamically switch between your lo
 
 ---
 
-## 1. Deploy the Backend to Render
+## 1. Deploy the Backend to Render (Using Docker)
 
-Render is a great platform for deploying Python APIs. It natively supports FastAPI and will handle the installation of your `requirements.txt` dependencies.
+Using Docker is highly recommended as it avoids all Python version and package conflict issues. Your repository already includes a pre-configured `Dockerfile` based on a stable Python environment.
 
 ### Steps:
 1. Ensure your code is pushed to a GitHub repository.
@@ -17,11 +17,9 @@ Render is a great platform for deploying Python APIs. It natively supports FastA
 4. Connect your GitHub account and select your `LLM_Powered_SOC_ANALYST` repository.
 5. Fill in the deployment details:
    - **Name**: `soc-analyst-backend` (or any name you prefer)
-   - **Environment**: `Python 3`
+   - **Environment**: Select **`Docker`** (Instead of Python)
    - **Region**: Choose the one closest to you.
    - **Branch**: `main` (or whichever branch you are using)
-   - **Build Command**: `pip install -r requirements.txt`
-   - **Start Command**: `uvicorn backend.main:app --host 0.0.0.0 --port $PORT`
 6. **Environment Variables**:
    Click "Advanced" and add any environment variables your application requires (e.g., any API keys for LLMs like `OPENROUTER_API_KEY` or `OPENAI_API_KEY` that might be present in your `.env` file).
 7. Select the **Free** instance type (or a paid one if you need more RAM/CPU for the RAG vector DB).
