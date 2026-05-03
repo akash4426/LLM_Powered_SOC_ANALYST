@@ -14,10 +14,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy requirements file
 COPY requirements.txt .
 
-# Install Python dependencies
+# Install CPU-only PyTorch first to save massive amounts of RAM (prevents OOM on Render Free tier)
+RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+
+# Install remaining Python dependencies
 # Use --no-cache-dir to reduce image size
 RUN pip install --no-cache-dir -r requirements.txt
-
 # Copy application code
 COPY . .
 
