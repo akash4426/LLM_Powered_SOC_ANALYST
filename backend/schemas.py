@@ -1,6 +1,6 @@
 """
-models.py
----------
+schemas.py
+----------
 Pydantic request / response models for the FastAPI SOC Analyst API.
 """
 
@@ -131,6 +131,7 @@ class AgentAnalysisResponse(BaseModel):
     severity: str = "LOW"
     confidence: float = 0.0
     decision: str = "MONITOR"
+    risk_score: float = 0.0
     why_flagged: List[str] = Field(default_factory=list)
     entities: List[str] = Field(default_factory=list)
 
@@ -139,6 +140,13 @@ class AgentAnalysisResponse(BaseModel):
 
     # Shows improvement from compound analysis
     detection_improvement: Optional[str] = None
+
+    # ── NEW: Agent reasoning & tool outputs ──
+    reasoning_trace: List[Dict[str, Any]] = Field(default_factory=list)
+    tool_results: List[Dict[str, Any]] = Field(default_factory=list)
+    iocs_extracted: Dict[str, Any] = Field(default_factory=dict)
+    response_playbook: Dict[str, Any] = Field(default_factory=dict)
+    total_analysis_ms: float = 0.0
 
     # Original pipeline report (full InvestigateResponse data)
     pipeline_report: Optional[Dict[str, Any]] = None

@@ -488,7 +488,8 @@ async def investigate_with_agent(
         timestamp=timestamp,
         events=events,
         threat_intel_score=ti_report.max_risk_score / 100.0,
-        anomaly_score=anomaly_score
+        anomaly_score=anomaly_score,
+        raw_logs=raw_logs,
     )
 
     # Attach the pipeline report for full context

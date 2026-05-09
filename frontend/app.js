@@ -1017,6 +1017,24 @@ function renderAgentReport(data) {
         `<span class="graph-node">${esc(e)}</span>`
       ).join(' ');
     }
+
+    // ── Risk Score ──
+    const amRiskScore = document.getElementById('am-risk-score');
+    if (amRiskScore) {
+      const risk = data.risk_score ?? 0;
+      amRiskScore.textContent = `${risk.toFixed(1)} / 100`;
+      const riskColor = risk >= 70 ? 'var(--red)' : risk >= 40 ? 'var(--amber)' : risk >= 20 ? 'var(--blue)' : 'var(--green)';
+      amRiskScore.style.color = riskColor;
+      setBar('am-risk-bar', risk, riskColor);
+    }
+
+    // ── Analysis Time ──
+    const amAnalysisTime = document.getElementById('am-analysis-time');
+    if (amAnalysisTime) {
+      const ms = data.total_analysis_ms ?? 0;
+      amAnalysisTime.textContent = ms > 1000 ? `${(ms/1000).toFixed(1)}s` : `${ms.toFixed(0)}ms`;
+      amAnalysisTime.style.color = 'var(--text-1)';
+    }
   }
 
   // ── Compound MITRE mappings ──
@@ -1078,9 +1096,149 @@ function renderAgentReport(data) {
     }
   }
 
+  // ── IOC Table ──
+  renderIOCTable(data.iocs_extracted || {});
+
+  // ── Response Playbook ──
+  renderPlaybook(data.response_playbook || {});
+
+  // ── Reasoning Trace ──
+  renderReasoningTrace(data.reasoning_trace || []);
+
   // Update raw output
   rawReport = JSON.stringify(data, null, 2);
   document.getElementById('raw-body').textContent = rawReport;
+}
+
+/* ─── IOC Table Renderer ─────────────────────────────────────── */
+function renderIOCTable(iocData) {
+  const section = document.getElementById('r-ioc-section');
+  const el = document.getElementById('r-ioc-table');
+  if (!section || !el) return;
+
+  const total = iocData.total_count || 0;
+  if (total === 0) { section.classList.add('hidden'); return; }
+  section.classList.remove('hidden');
+
+  const allIOCs = [
+    ...(iocData.ipv4 || []).map(i => ({...i, _badge: 'ib-ipv4', _label: 'IPv4'})),
+    ...(iocData.ipv6 || []).map(i => ({...i, _badge: 'ib-ipv4', _label: 'IPv6'})),
+    ...(iocData.domains || []).map(i => ({...i, _badge: 'ib-domain', _label: 'DOMAIN'})),
+    ...(iocData.urls || []).map(i => ({...i, _badge: 'ib-url', _label: 'URL'})),
+    ...(iocData.hashes || []).map(i => ({...i, _badge: 'ib-hash', _label: 'HASH'})),
+    ...(iocData.emails || []).map(i => ({...i, _badge: 'ib-email', _label: 'EMAIL'})),
+    ...(iocData.file_paths || []).map(i => ({...i, _badge: 'ib-path', _label: 'PATH'})),
+  ];
+
+  const susCount = iocData.suspicious_count || 0;
+  let html = `<div class="ioc-summary">${total} indicators extracted · ${susCount} suspicious</div>`;
+  html += '<div class="ioc-grid">';
+  html += '<div class="ioc-row ioc-row-header"><span>TYPE</span><span>INDICATOR</span><span>STATUS</span></div>';
+
+  allIOCs.slice(0, 20).forEach(ioc => {
+    const statusClass = ioc.is_private ? 'is-private' : ioc.is_benign ? 'is-benign' : 'is-suspicious';
+    const statusText = ioc.is_private ? 'PRIVATE' : ioc.is_benign ? 'BENIGN' : 'SUSPICIOUS';
+    html += `<div class="ioc-row">
+      <span class="ioc-type-badge ${ioc._badge}">${ioc._label}</span>
+      <span class="ioc-value">${esc(ioc.value)}</span>
+      <span class="ioc-status ${statusClass}">${statusText}</span>
+    </div>`;
+  });
+
+  html += '</div>';
+  el.innerHTML = html;
+  if (susCount > 0) feedEntry(`IOC: ${susCount} suspicious indicator(s) extracted`, 'feed-found');
+}
+
+/* ─── Playbook Renderer ──────────────────────────────────────── */
+function renderPlaybook(pbData) {
+  const section = document.getElementById('r-playbook-section');
+  const el = document.getElementById('r-playbook');
+  if (!section || !el) return;
+
+  if (!pbData.name) { section.classList.add('hidden'); return; }
+  section.classList.remove('hidden');
+
+  const slaClass = pbData.sla_minutes <= 15 ? 'sla-urgent' : 'sla-normal';
+  let html = `<div class="playbook-container">`;
+  html += `<div class="playbook-header">
+    <span class="playbook-name">${esc(pbData.name)}</span>
+    <span class="playbook-sla ${slaClass}">SLA: ${pbData.sla_minutes}min</span>
+  </div>`;
+
+  const actions = pbData.actions || [];
+  if (actions.length > 0) {
+    html += '<div class="playbook-actions">';
+    actions.forEach(a => {
+      const ppClass = a.priority === 'IMMEDIATE' ? 'pp-immediate' : a.priority === 'SHORT_TERM' ? 'pp-short' : 'pp-long';
+      const ppLabel = a.priority === 'IMMEDIATE' ? 'IMMEDIATE' : a.priority === 'SHORT_TERM' ? 'SHORT' : 'LONG';
+      html += `<div class="playbook-action">
+        <span class="playbook-priority ${ppClass}">${ppLabel}</span>
+        <span class="playbook-action-text">${esc(a.action)}</span>
+        <span class="playbook-category">${esc(a.category || '')}</span>
+      </div>`;
+    });
+    html += '</div>';
+  }
+
+  const escalation = pbData.escalation_criteria || [];
+  if (escalation.length > 0) {
+    html += '<div class="playbook-escalation">';
+    html += '<div class="playbook-escalation-title">ESCALATION CRITERIA</div>';
+    escalation.forEach(c => { html += `<div class="playbook-escalation-item">${esc(c)}</div>`; });
+    html += '</div>';
+  }
+
+  html += '</div>';
+  el.innerHTML = html;
+  feedEntry(`Playbook: ${pbData.name} (${actions.length} actions)`, 'feed-found');
+}
+
+/* ─── Reasoning Trace Renderer ───────────────────────────────── */
+function renderReasoningTrace(trace) {
+  const section = document.getElementById('r-reasoning-trace-section');
+  const el = document.getElementById('r-reasoning-trace');
+  if (!section || !el) return;
+
+  if (!trace || trace.length === 0) { section.classList.add('hidden'); return; }
+  section.classList.remove('hidden');
+
+  const phaseColors = {
+    observe: 'var(--blue)', think: 'var(--purple)', act: 'var(--amber)',
+    synthesize: 'var(--green)', decide: 'var(--red)', explain: '#5cb8b2',
+  };
+
+  let html = '';
+  trace.forEach(step => {
+    const phase = step.phase || 'act';
+    const dotClass = `td-${phase}`;
+    const color = phaseColors[phase] || 'var(--text-2)';
+    const timeStr = step.duration_ms ? `${step.duration_ms.toFixed(0)}ms` : '';
+
+    html += `<div class="trace-step">
+      <span class="trace-dot ${dotClass}"></span>
+      <div class="trace-content">
+        <div class="trace-header">
+          <span class="trace-phase" style="color:${color}">STEP ${step.step_number}: ${esc(phase)}</span>
+          <span class="trace-time">${timeStr}</span>
+        </div>
+        <div class="trace-desc">${esc(step.description)}</div>`;
+
+    const tools = step.tool_results || [];
+    if (tools.length > 0) {
+      html += '<div class="trace-tools">';
+      tools.forEach(tr => {
+        const cls = tr.status === 'success' ? 'tc-success' : tr.status === 'error' ? 'tc-error' : 'tc-skipped';
+        const timeLabel = tr.execution_time_ms ? ` (${tr.execution_time_ms.toFixed(0)}ms)` : '';
+        html += `<span class="trace-tool-chip ${cls}">${esc(tr.tool_name)}${timeLabel}</span>`;
+      });
+      html += '</div>';
+    }
+
+    html += '</div></div>';
+  });
+
+  el.innerHTML = html;
 }
 
 /* ─── Keyboard shortcut (Enter to run) ──────────────────────── */

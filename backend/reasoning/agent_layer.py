@@ -1,37 +1,16 @@
 """
-agent_layer.py
---------------
-Elite SOC-style Agentic AI Layer.
+agent_layer.py — Next-Level Agentic AI Layer with ReAct-style tool reasoning.
 
-Features:
-  • Evidence-based confidence scoring (deterministic, no LLM)
-  • Multi-step hypothesis loop with compound intelligence
-  • Time-aware correlation with decay function
-  • Structured incident generation with full decision framework
-  • Multi-stage attack detection across sessions
-  • Explainability with evidence ledger
-
-Architecture:
-  1. Update entity memory with current session
-  2. Correlate across historical sessions (time-aware)
-  3. Build hypothesis from event patterns
-  4. Refine with models (re-run LSTM + RAG on combined sequences)
-  5. Compute deterministic confidence from evidence
-  6. Apply decision engine (AUTO_REMEDIATE | ESCALATE_L2 | MONITOR)
-  7. Generate structured incident with timeline and reasoning
-
-Integration:
-  • Called AFTER existing pipeline (Steps 1-9)
-  • Consumes LSTM scores, RAG mappings, event types
-  • Does NOT modify or bypass LSTM/RAG
-  • Returns AgentAnalysisResponse for FastAPI
+Multi-step reasoning pipeline:
+  1. OBSERVE  — Collect initial signals
+  2. THINK   — Determine analysis strategy
+  3. ACT     — Execute tools (anomaly, RAG, TI, IOC, patterns, playbooks)
+  4. SYNTHESIZE — Merge tool outputs into unified evidence
+  5. DECIDE  — Compute confidence, severity, decision
+  6. EXPLAIN — Generate narrative with full reasoning trace
 """
 
-import logging
-import time
-import threading
-import uuid
-import re
+import logging, time, threading, uuid, re
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
@@ -40,10 +19,13 @@ from collections import Counter
 from backend.models.lstm_model import score_sequence
 from backend.rag.rag_engine import retrieve_context
 from backend.processing.event_extractor import SecurityEvent, get_mitre_query
-from backend.processing.pattern_detector import detect_patterns
+from backend.reasoning.agent_tools import (
+    ToolResult, ReasoningStep,
+    run_anomaly_score_tool, run_rag_lookup_tool, run_threat_intel_tool,
+    run_ioc_extractor_tool, run_pattern_match_tool, run_playbook_tool,
+)
 
 logger = logging.getLogger(__name__)
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 1. SESSION RECORD & ENTITY MEMORY
@@ -51,115 +33,88 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class SessionRecord:
-    """Captures a single session's analysis for memory and correlation."""
     session_id: str
-    timestamp: str                    # ISO-8601
-    epoch: float                      # Unix timestamp for time comparisons
-    sequence: List[int]               # Event type integers
-    event_types: List[str]            # Event type names (LOGIN, PRIV_ESC, etc.)
+    timestamp: str
+    epoch: float
+    sequence: List[int]
+    event_types: List[str]
     anomaly_score: float
-    mitre_mappings: List[str]         # MITRE technique IDs (T1110, etc.)
+    mitre_mappings: List[str]
     events_summary: List[Dict[str, Any]]
     entity_id: str
 
-
 @dataclass
 class CorrelationResult:
-    """Result of time-aware correlation across sessions."""
     is_correlated: bool = False
     correlated_sessions: List[SessionRecord] = field(default_factory=list)
     correlation_depth: int = 0
     combined_event_types: List[str] = field(default_factory=list)
     correlation_weight: float = 0.0
 
-
 @dataclass
 class RefinedResult:
-    """Result of re-running LSTM + RAG on combined sequences."""
     compound_anomaly_score: float = 0.0
     compound_mitre_mappings: List[str] = field(default_factory=list)
     combined_sequence: List[int] = field(default_factory=list)
     improvement_detail: str = ""
 
-
 @dataclass
 class EvidenceLedger:
-    """Structured evidence for confidence scoring."""
     lstm_score: float
     rag_matches: int
     correlation_depth: int
     threat_intel_score: float
-    
+    pattern_score: float = 0.0
+    ioc_count: int = 0
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "lstm_score": self.lstm_score,
-            "rag_matches": self.rag_matches,
+            "lstm_score": self.lstm_score, "rag_matches": self.rag_matches,
             "correlation_depth": self.correlation_depth,
             "threat_intel_score": self.threat_intel_score,
+            "pattern_score": self.pattern_score, "ioc_count": self.ioc_count,
         }
 
-
 class EntityMemoryStore:
-    """Thread-safe store of sessions per entity."""
     MAX_SESSIONS_PER_ENTITY = 50
-    TTL_SECONDS = 86400  # 24 hours
+    TTL_SECONDS = 86400
 
     def __init__(self):
         self._store: Dict[str, List[SessionRecord]] = {}
         self._lock = threading.Lock()
 
     def store_session(self, record: SessionRecord) -> None:
-        """Store a session and prune old ones."""
         with self._lock:
             entity = record.entity_id
             if entity not in self._store:
                 self._store[entity] = []
-
-            # Remove expired sessions
             cutoff = time.time() - self.TTL_SECONDS
             self._store[entity] = [r for r in self._store[entity] if r.epoch >= cutoff]
-            
             self._store[entity].append(record)
-
-            # Keep only most recent MAX_SESSIONS_PER_ENTITY
             if len(self._store[entity]) > self.MAX_SESSIONS_PER_ENTITY:
                 self._store[entity] = self._store[entity][-self.MAX_SESSIONS_PER_ENTITY:]
 
     def get_sessions(self, entity_id: str, window_seconds: int = 21600) -> List[SessionRecord]:
-        """Retrieve sessions for entity within time window."""
         with self._lock:
             records = self._store.get(entity_id, [])
             cutoff = time.time() - window_seconds
             return [r for r in records if r.epoch >= cutoff]
 
     def get_all_entities(self) -> List[str]:
-        """List all tracked entities."""
         with self._lock:
             return list(self._store.keys())
 
     def clear(self) -> None:
-        """Clear all memory."""
         with self._lock:
             self._store.clear()
 
-
 _memory = EntityMemoryStore()
-
-def get_memory_store() -> EntityMemoryStore:
-    """Get global memory store instance."""
-    return _memory
-
-
-def update_memory(record: SessionRecord) -> None:
-    """Store session record into entity memory."""
-    _memory.store_session(record)
-
+def get_memory_store() -> EntityMemoryStore: return _memory
+def update_memory(record: SessionRecord) -> None: _memory.store_session(record)
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 2. TIME-AWARE CORRELATION
+# 2. CAMPAIGN PATTERNS & CORRELATION
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# Campaign patterns: multi-stage attack sequences mapped to hypothesis names
 CAMPAIGN_PATTERNS: Dict[str, List[str]] = {
     "full_kill_chain": ["LOGIN", "PRIV_ESC", "LATERAL_MOVE", "EXFILTRATION"],
     "privilege_escalation_chain": ["LOGIN", "PRIV_ESC", "SUSPICIOUS_EXEC"],
@@ -170,523 +125,392 @@ CAMPAIGN_PATTERNS: Dict[str, List[str]] = {
     "credential_theft": ["LOGIN", "SUSPICIOUS_EXEC", "EXFILTRATION"],
 }
 
-
 def correlate_events(entity_id: str, window_seconds: int = 21600) -> CorrelationResult:
-    """
-    Retrieve past sessions for entity, apply time-aware decay, and identify correlations.
-    
-    Recent events have higher weight. Multiple suspicious sessions indicate attack progression.
-    """
     all_sessions = _memory.get_sessions(entity_id, window_seconds)
-
-    # Filter to suspicious sessions (not all NORMAL events)
     suspicious = [s for s in all_sessions if any(et != "NORMAL" for et in s.event_types)]
-
     if len(suspicious) < 2:
-        # No correlation if only single or no suspicious sessions
         return CorrelationResult()
-
     suspicious.sort(key=lambda s: s.epoch)
-
-    # Combine event types and calculate time-weighted importance
-    combined_types: List[str] = []
-    total_weight = 0.0
+    combined_types, total_weight = [], 0.0
     current_time = time.time()
-
     for sess in suspicious:
         combined_types.extend(sess.event_types)
-        # Linear decay: recent = 1.0, old = 0.0
-        age_seconds = current_time - sess.epoch
-        weight = max(0.0, 1.0 - (age_seconds / window_seconds))
-        total_weight += weight
-
-    return CorrelationResult(
-        is_correlated=True,
-        correlated_sessions=suspicious,
-        correlation_depth=len(suspicious),
-        combined_event_types=combined_types,
-        correlation_weight=total_weight
-    )
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# 3. HYPOTHESIS LOOP
-# ═══════════════════════════════════════════════════════════════════════════════
+        age = current_time - sess.epoch
+        total_weight += max(0.0, 1.0 - (age / window_seconds))
+    return CorrelationResult(True, suspicious, len(suspicious), combined_types, total_weight)
 
 def build_hypothesis(combined_event_types: List[str]) -> Optional[str]:
-    """
-    Analyze combined event types across sessions and match to known campaign patterns.
-    Returns hypothesis name (e.g., "full_kill_chain") or None if no match.
-    """
-    for pattern_name, pattern_sequence in CAMPAIGN_PATTERNS.items():
+    for name, seq in CAMPAIGN_PATTERNS.items():
         idx = 0
-        for event_type in combined_event_types:
-            if idx < len(pattern_sequence) and event_type == pattern_sequence[idx]:
+        for et in combined_event_types:
+            if idx < len(seq) and et == seq[idx]:
                 idx += 1
-            if idx == len(pattern_sequence):
-                return pattern_name
+            if idx == len(seq):
+                return name
     return None
 
-
-def refine_with_models(
-    hypothesis: Optional[str],
-    correlation: CorrelationResult,
-    individual_anomaly: float,
-    individual_mitre: List[str]
-) -> RefinedResult:
-    """
-    Multi-step hypothesis refinement:
-    1. Combine event sequences from correlated sessions
-    2. Re-run LSTM on combined sequence
-    3. Refine RAG query using hypothesis
-    4. Re-run RAG for additional MITRE mappings
-    5. Merge and report improvements
-    """
+def refine_with_models(hypothesis, correlation, individual_anomaly, individual_mitre):
     if not correlation.is_correlated:
-        return RefinedResult(
-            compound_anomaly_score=individual_anomaly,
-            compound_mitre_mappings=individual_mitre,
-        )
-
-    # Step 1: Combine integer sequences
-    combined_seq: List[int] = []
+        return RefinedResult(individual_anomaly, individual_mitre)
+    combined_seq = []
     for sess in correlation.correlated_sessions:
         combined_seq.extend(sess.sequence)
-
-    # Step 2: Re-run LSTM on combined sequence
     compound_anomaly = score_sequence(combined_seq)
-
-    # Step 3: Build refined RAG query
-    all_mitre_hints: List[str] = []
+    all_mitre = []
     for sess in correlation.correlated_sessions:
-        for mapping in sess.mitre_mappings:
-            if mapping not in all_mitre_hints:
-                all_mitre_hints.append(mapping)
-
-    # Incorporate hypothesis into query
-    hypothesis_str = f" {hypothesis.replace('_', ' ')} attack campaign" if hypothesis else " multi-stage attack campaign"
-    refined_query = " | ".join(all_mitre_hints) + hypothesis_str if all_mitre_hints else hypothesis_str
-
-    # Step 4: Re-run RAG with refined query
-    compound_rag_context = retrieve_context(refined_query, k=5)
-    
-    # Extract MITRE techniques from refined RAG context
-    compound_mitre = list(dict.fromkeys(re.findall(r"T\d{4}(?:\.\d{3})?", compound_rag_context)))
-    merged_mitre = list(dict.fromkeys(individual_mitre + compound_mitre))
-
-    # Step 5: Use best (highest) anomaly score
-    final_anomaly = max(compound_anomaly, individual_anomaly)
-
-    # Document improvements
+        for m in sess.mitre_mappings:
+            if m not in all_mitre: all_mitre.append(m)
+    hyp_str = f" {hypothesis.replace('_',' ')} attack campaign" if hypothesis else " multi-stage attack campaign"
+    refined_query = " | ".join(all_mitre) + hyp_str if all_mitre else hyp_str
+    compound_ctx = retrieve_context(refined_query, k=5)
+    compound_mitre = list(dict.fromkeys(re.findall(r"T\d{4}(?:\.\d{3})?", compound_ctx)))
+    merged = list(dict.fromkeys(individual_mitre + compound_mitre))
+    final = max(compound_anomaly, individual_anomaly)
     improvement = ""
     if compound_anomaly > individual_anomaly:
-        delta = compound_anomaly - individual_anomaly
-        improvement = f"Compound analysis increased anomaly score by {delta:.4f} ({individual_anomaly:.4f} → {compound_anomaly:.4f}). Combined {len(correlation.correlated_sessions)} sessions revealed full attack pattern."
-    
-    if len(merged_mitre) > len(individual_mitre):
-        new_techniques = [t for t in merged_mitre if t not in individual_mitre]
-        improvement += f" RAG retrieval discovered {len(new_techniques)} additional MITRE technique(s): {', '.join(new_techniques)}."
-
-    return RefinedResult(
-        compound_anomaly_score=final_anomaly,
-        compound_mitre_mappings=merged_mitre,
-        combined_sequence=combined_seq,
-        improvement_detail=improvement or "No improvement from compound analysis.",
-    )
-
+        improvement = f"Compound analysis increased anomaly by {compound_anomaly-individual_anomaly:.4f}. "
+    if len(merged) > len(individual_mitre):
+        new_t = [t for t in merged if t not in individual_mitre]
+        improvement += f"Discovered {len(new_t)} new technique(s): {', '.join(new_t)}."
+    return RefinedResult(final, merged, combined_seq, improvement or "No improvement from compound analysis.")
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 4. EVIDENCE-BASED CONFIDENCE & DECISION ENGINE
+# 3. CONFIDENCE, SEVERITY & DECISION
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def compute_confidence(evidence: EvidenceLedger) -> float:
-    """
-    Compute deterministic confidence score from evidence ledger.
-    
-    Formula:
-      confidence = (
-        0.4 * lstm_score +
-        0.25 * min(rag_matches / 5.0, 1.0) +
-        0.2 * min(correlation_depth / 4.0, 1.0) +
-        0.15 * threat_intel_score
-      )
-    
-    All components normalized to [0, 1], final result rounded to 4 decimals.
-    """
-    confidence = (
-        0.4 * min(evidence.lstm_score, 1.0) +
-        0.25 * min(evidence.rag_matches / 5.0, 1.0) +
-        0.2 * min(evidence.correlation_depth / 4.0, 1.0) +
-        0.15 * min(evidence.threat_intel_score, 1.0)
-    )
-    return round(min(confidence, 1.0), 4)
+    c = (0.35 * min(evidence.lstm_score, 1.0) +
+         0.20 * min(evidence.rag_matches / 5.0, 1.0) +
+         0.15 * min(evidence.correlation_depth / 4.0, 1.0) +
+         0.10 * min(evidence.threat_intel_score, 1.0) +
+         0.10 * min(evidence.pattern_score, 1.0) +
+         0.10 * min(evidence.ioc_count / 10.0, 1.0))
+    return round(min(c, 1.0), 4)
 
-
-def decide_action(confidence: float, severity: str = "LOW") -> str:
-    """
-    Decision logic based on confidence threshold AND severity.
-    
-    - If severity CRITICAL and confidence >= 0.5 -> AUTO_REMEDIATE
-    - If severity HIGH/CRITICAL or confidence >= 0.6 -> ESCALATE_L2
-    - otherwise -> MONITOR
-    """
-    sev = severity.upper()
-    if sev == "CRITICAL" and confidence >= 0.5:
-        return "AUTO_REMEDIATE"
-    elif sev in ("HIGH", "CRITICAL") or confidence >= 0.6:
-        return "ESCALATE_L2"
+def compute_severity(anomaly, corr_depth, mitre_count, ti_score):
+    if anomaly < 0.2:
+        return "MEDIUM" if (mitre_count >= 1 or ti_score > 0 or corr_depth >= 1) else "LOW"
+    elif anomaly < 0.6:
+        return "MEDIUM"
     else:
-        return "MONITOR"
+        return "CRITICAL" if (anomaly >= 0.8 or corr_depth >= 2 or mitre_count >= 2 or ti_score > 0.5) else "HIGH"
 
+def compute_risk_score(anomaly, confidence, ti_score, pattern_score, corr_depth):
+    raw = (anomaly * 35 + confidence * 25 + ti_score * 20 + pattern_score * 10 + min(corr_depth/4, 1.0) * 10)
+    return round(min(raw, 100.0), 1)
+
+def decide_action(confidence, severity="LOW"):
+    sev = severity.upper()
+    if sev == "CRITICAL" and confidence >= 0.5: return "AUTO_REMEDIATE"
+    elif sev in ("HIGH", "CRITICAL") or confidence >= 0.6: return "ESCALATE_L2"
+    return "MONITOR"
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 5. STRUCTURED INCIDENT OUTPUT
+# 4. TIMELINE & EXPLANATION
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def build_timeline(correlation: CorrelationResult, current_record: SessionRecord) -> List[Dict[str, Any]]:
-    """Build chronological timeline of events from session(s)."""
-    timeline: List[Dict[str, Any]] = []
+def build_timeline(correlation, current_record):
+    timeline = []
     sessions = correlation.correlated_sessions if correlation.is_correlated else [current_record]
-    
     for sess in sessions:
         for evt in sess.events_summary:
-            # Ensure timestamp is never null — fall back to session timestamp
-            ts = evt.get("timestamp") or sess.timestamp or ""
             timeline.append({
-                "timestamp": ts,
+                "timestamp": evt.get("timestamp") or sess.timestamp or "",
                 "entity_id": sess.entity_id,
                 "event_type": evt.get("event_type", "UNKNOWN"),
                 "description": evt.get("description", ""),
                 "session_anomaly_score": sess.anomaly_score,
                 "session_id": sess.session_id,
             })
-    
-    # Sort chronologically
     timeline.sort(key=lambda x: x.get("timestamp") or "")
     return timeline
 
-
-def compute_severity(
-    anomaly_score: float,
-    correlation_depth: int,
-    mitre_count: int,
-    threat_intel_score: float
-) -> str:
-    """
-    Compute severity (threat risk) based on multiple factors.
-    
-    Rules (Signal Fusion):
-    - Behavior (LSTM) is primary signal:
-      - anomaly_score < 0.2 -> LOW or MEDIUM (even if MITRE exists)
-      - anomaly_score between 0.2 and 0.6 -> MEDIUM
-      - anomaly_score >= 0.6 -> HIGH or CRITICAL
-    """
-    if anomaly_score < 0.2:
-        if mitre_count >= 1 or threat_intel_score > 0 or correlation_depth >= 1:
-            return "MEDIUM"
-        return "LOW"
-    elif anomaly_score < 0.6:
-        return "MEDIUM"
-    else:
-        # anomaly >= 0.6
-        if anomaly_score >= 0.8 or correlation_depth >= 2 or mitre_count >= 2 or threat_intel_score > 0.5:
-            return "CRITICAL"
-        return "HIGH"
-
-
-def _fallback_explanation(incident: Dict[str, Any], severity: str) -> str:
-    """Fallback explanation when LLM is unavailable."""
+def _fallback_explanation(incident, severity):
     itype = incident.get("incident_type", "unknown").replace("_", " ")
+    parts = [f"Detected {itype} incident involving {', '.join(incident.get('entities', []))}."]
     depth = incident.get("correlation_depth", 0)
     mitre = incident.get("compound_mitre_mappings", [])
-    entities = incident.get("entities", [])
-    
-    parts = [f"Detected {itype} incident involving {', '.join(entities)}."]
-    
-    if depth > 1:
-        parts.append(f"Cross-session correlation linked {depth} sessions showing progressive attack escalation.")
-    
-    if mitre:
-        parts.append(f"Mapped to MITRE ATT&CK techniques: {', '.join(mitre)}.")
-    
-    # Signal fusion explanation
     anomaly = incident.get("compound_anomaly_score", 0.0)
-    has_external = bool(mitre) or incident.get("evidence", {}).get("threat_intel_score", 0.0) > 0
-
-    if anomaly < 0.2 and has_external:
-        parts.append("External threat indicators are present, but behavioral analysis does not confirm malicious activity. Monitoring recommended.")
-    elif anomaly >= 0.6:
-        parts.append("Behavior strongly deviates from normal patterns, consistent with attack behavior.")
-    elif anomaly < 0.2 and not has_external:
-        parts.append("No significant behavioral deviations or external threat indicators observed.")
-        
-    parts.append(f"Severity assessed as {severity}. Decision: {incident.get('decision', 'MONITOR')}.")
-    
+    if depth > 1: parts.append(f"Cross-session correlation linked {depth} sessions.")
+    if mitre: parts.append(f"MITRE techniques: {', '.join(mitre)}.")
+    if anomaly >= 0.6: parts.append("Behavior strongly deviates from normal patterns.")
+    elif anomaly < 0.2: parts.append("Behavioral analysis shows low deviation.")
+    parts.append(f"Severity: {severity}. Decision: {incident.get('decision', 'MONITOR')}.")
     return " ".join(parts)
 
-
-def generate_agent_explanation(
-    incident: Dict[str, Any],
-    timeline: List[Dict[str, Any]],
-    severity: str,
-    confidence: float
-) -> str:
-    """
-    Generate narrative explanation using LLM (if available) or fallback.
-    
-    LLM is used for narrative only; all scores/severity/confidence are pre-computed.
-    """
+def generate_agent_explanation(incident, timeline, severity, confidence):
     try:
         from backend.reasoning.llm_agent import generate_inference
     except ImportError:
-        logger.warning("LLM inference not available, using fallback explanation")
         return _fallback_explanation(incident, severity)
-
-    # Build timeline string for LLM context
     timeline_str = ""
-    for i, entry in enumerate(timeline[:15], 1):
-        timeline_str += f"  {i}. [{entry.get('timestamp', 'N/A')}] {entry['event_type']} — {entry.get('description', 'N/A')} (session: {entry['session_id']})\n"
-
-    mitre_str = ", ".join(incident.get("compound_mitre_mappings", [])) or "None identified"
-
+    for i, e in enumerate(timeline[:15], 1):
+        timeline_str += f"  {i}. [{e.get('timestamp','N/A')}] {e['event_type']} — {e.get('description','N/A')}\n"
+    mitre_str = ", ".join(incident.get("compound_mitre_mappings", [])) or "None"
     prompt = f"""You are a Senior SOC Analyst writing an incident summary.
-
-INCIDENT DATA (pre-computed — do NOT modify these values):
-  Incident Type : {incident['incident_type']}
-  Severity      : {severity}
-  Confidence    : {confidence:.1%}
-  Decision      : {incident.get('decision', 'MONITOR')}
-  Anomaly Score : {incident['compound_anomaly_score']:.4f}
-  MITRE Techniques: {mitre_str}
-  Sessions Correlated: {incident['correlation_depth']}
-  Campaign Pattern: {incident.get('campaign_pattern', 'None')}
-
-ATTACK TIMELINE (chronological):
-{timeline_str}
-
-ENTITIES INVOLVED: {', '.join(incident['entities'])}
-DETECTION IMPROVEMENT: {incident.get('detection_improvement', 'N/A')}
-
-INSTRUCTIONS:
-1. Write a 3-4 sentence narrative explaining this incident
-2. Describe what the attacker likely attempted based on the timeline
-3. If anomaly_score is low (< 0.2) but MITRE techniques or threat intel are present, acknowledge the external indicators but state that behavioral analysis does not confirm malicious activity.
-4. If anomaly_score is high (>= 0.6), state that behavior strongly deviates from normal patterns.
-5. Keep the explanation under 4 sentences. Do NOT invent new facts.
-6. Provide 3 specific mitigation/response actions
-7. Do NOT generate or modify any scores, severity, or confidence values
-8. Return ONLY a JSON object with keys: "narrative", "attack_assessment", "mitigations"
-
-Return valid JSON only:"""
-
+INCIDENT: {incident['incident_type']} | Severity: {severity} | Confidence: {confidence:.1%}
+Decision: {incident.get('decision','MONITOR')} | Anomaly: {incident['compound_anomaly_score']:.4f}
+MITRE: {mitre_str} | Sessions: {incident['correlation_depth']} | Campaign: {incident.get('campaign_pattern','None')}
+TIMELINE:\n{timeline_str}
+ENTITIES: {', '.join(incident['entities'])}
+Write 3-4 sentence narrative. Return JSON: {{"narrative":"...","attack_assessment":"...","mitigations":["..."]}}"""
     try:
+        import json, re as _re
         raw = generate_inference(prompt)
-        import json
-        parsed = json.loads(raw)
-        narrative = parsed.get("narrative", "")
-        assessment = parsed.get("attack_assessment", "")
-        mitigations = parsed.get("mitigations", [])
-        if isinstance(mitigations, list):
-            mitigations = "; ".join(mitigations)
-        return f"{narrative} {assessment} Recommended actions: {mitigations}"
-    except Exception as e:
-        logger.warning(f"LLM explanation generation failed: {e}, using fallback")
-        return _fallback_explanation(incident, severity)
+        # Try JSON parse (pure, fenced, or embedded)
+        parsed = None
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            fenced = _re.search(r'```(?:json)?\s*(\{.*?\})\s*```', raw, _re.DOTALL)
+            if fenced:
+                try: parsed = json.loads(fenced.group(1))
+                except json.JSONDecodeError: pass
+            if not parsed:
+                block = _re.search(r'\{.*\}', raw, _re.DOTALL)
+                if block:
+                    try: parsed = json.loads(block.group())
+                    except json.JSONDecodeError: pass
 
+        if parsed:
+            narrative = parsed.get("narrative", "")
+            assessment = parsed.get("attack_assessment", "")
+            mits = parsed.get("mitigations", [])
+            if isinstance(mits, list): mits = "; ".join(mits)
+            return f"{narrative} {assessment} Recommended: {mits}"
+
+        # If JSON parse failed entirely, use raw LLM text if it's reasonable
+        if raw and len(raw) > 30:
+            return raw[:1500]
+
+        return _fallback_explanation(incident, severity)
+    except Exception as e:
+        logger.warning(f"LLM explanation failed: {e}")
+        return _fallback_explanation(incident, severity)
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 6. MAIN ENTRY POINT
+# 5. MAIN ENTRY POINT — MULTI-STEP REASONING
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def analyze_with_agent(
-    sequence: List[int],
-    entity_id: str,
-    timestamp: str,
-    events: List[SecurityEvent] = None,
-    threat_intel_score: float = 0.0,
-    anomaly_score: Optional[float] = None
+    sequence: List[int], entity_id: str, timestamp: str,
+    events: List[SecurityEvent] = None, threat_intel_score: float = 0.0,
+    anomaly_score: Optional[float] = None, raw_logs: str = "",
 ) -> Dict[str, Any]:
     """
-    Elite SOC-style agent analysis. Called AFTER existing pipeline completes.
-    
-    Args:
-        sequence: Integer sequence of event types from pipeline
-        entity_id: Entity identifier (IP, user, hostname)
-        timestamp: ISO-8601 timestamp for this session
-        events: SecurityEvent list for context
-        threat_intel_score: Threat intelligence risk score [0, 1]
-        anomaly_score: Pre-computed anomaly score (e.g. from network flow model)
-    
-    Returns:
-        Dict with incident type, severity, confidence, decision, timeline, etc.
+    Next-level agent analysis with ReAct-style multi-tool reasoning.
+    Returns structured incident with full reasoning trace.
     """
     events = events or []
     session_id = str(uuid.uuid4())[:8]
+    reasoning_trace: List[Dict[str, Any]] = []
+    tool_results_all: List[Dict[str, Any]] = []
+    t_start = time.time()
 
-    # ── Step 1: Baseline pipeline outputs & Pattern Detection for current session 
-    individual_anomaly = anomaly_score if anomaly_score is not None else score_sequence(sequence)
-    
-    # Run Pattern Detector
-    pattern_name, pattern_score = detect_patterns(events)
-    effective_anomaly = max(individual_anomaly, pattern_score)
-    
-    mitre_query = get_mitre_query(events)
-    rag_context = retrieve_context(mitre_query, k=3)
-    
-    # Extract MITRE techniques from both query hints and RAG context
-    individual_mitre = list(dict.fromkeys(re.findall(r"T\d{4}(?:\.\d{3})?", rag_context)))
-    event_mitre_hints = list(dict.fromkeys(re.findall(r"T\d{4}(?:\.\d{3})?", mitre_query)))
-    individual_mitre = list(dict.fromkeys(individual_mitre + event_mitre_hints))
-
+    # ── STEP 1: OBSERVE ────────────────────────────────────────────────────
+    step1_start = time.time()
     event_types = [e.event_type for e in events]
-    events_summary = [
-        {
-            "event_type": e.event_type,
-            "description": e.description,
-            "timestamp": e.timestamp,
-            "source_ip": e.source_ip,
-            "dest_ip": e.dest_ip,
-            "user": e.user
-        }
-        for e in events
-    ]
-
-    # Parse timestamp to epoch
+    events_summary = [{"event_type": e.event_type, "description": e.description,
+                       "timestamp": e.timestamp, "source_ip": e.source_ip,
+                       "dest_ip": e.dest_ip, "user": e.user} for e in events]
     try:
         epoch = datetime.fromisoformat(timestamp.replace("Z", "+00:00")).timestamp()
     except (ValueError, AttributeError):
         epoch = time.time()
 
+    reasoning_trace.append(ReasoningStep(
+        1, "observe", f"Collected {len(events)} events for entity {entity_id}",
+        duration_ms=(time.time()-step1_start)*1000
+    ).to_dict())
+
+    # ── STEP 2: THINK — Select tools ───────────────────────────────────────
+    step2_start = time.time()
+    suspicious_types = [et for et in event_types if et != "NORMAL"]
+    tools_to_run = ["anomaly_score", "pattern_match", "rag_lookup", "threat_intel", "ioc_extractor"]
+    reasoning_trace.append(ReasoningStep(
+        2, "think", f"Strategy: {len(suspicious_types)} suspicious events detected. Running {len(tools_to_run)} tools.",
+        duration_ms=(time.time()-step2_start)*1000
+    ).to_dict())
+
+    # ── STEP 3: ACT — Execute tools ────────────────────────────────────────
+    step3_start = time.time()
+    step3_results = []
+
+    # Tool 1: Anomaly Score
+    anomaly_result = run_anomaly_score_tool(sequence, anomaly_score)
+    step3_results.append(anomaly_result)
+    tool_results_all.append(anomaly_result.to_dict())
+    effective_anomaly = anomaly_result.output.get("anomaly_score", anomaly_score or 0.0)
+
+    # Tool 2: Pattern Match
+    pattern_result = run_pattern_match_tool(events)
+    step3_results.append(pattern_result)
+    tool_results_all.append(pattern_result.to_dict())
+    pattern_name = pattern_result.output.get("pattern_name")
+    pattern_score = pattern_result.output.get("pattern_score", 0.0)
+    pattern_indicators = pattern_result.output.get("matched_indicators", [])
+    pattern_mitre = pattern_result.output.get("mitre_suggestions", [])
+
+    # Effective anomaly = max of LSTM and pattern
+    effective_anomaly = max(effective_anomaly, pattern_score)
+
+    # Tool 3: RAG Lookup
+    rag_result = run_rag_lookup_tool(events)
+    step3_results.append(rag_result)
+    tool_results_all.append(rag_result.to_dict())
+    individual_mitre = rag_result.output.get("techniques_found", [])
+    # Merge pattern MITRE suggestions
+    individual_mitre = list(dict.fromkeys(individual_mitre + pattern_mitre))
+
+    # Tool 4: Threat Intel
+    ti_result = run_threat_intel_tool(events)
+    step3_results.append(ti_result)
+    tool_results_all.append(ti_result.to_dict())
+    ti_score_val = ti_result.output.get("max_risk_score", 0) / 100.0
+
+    # Tool 5: IOC Extraction
+    ioc_result = run_ioc_extractor_tool(raw_logs)
+    step3_results.append(ioc_result)
+    tool_results_all.append(ioc_result.to_dict())
+    ioc_data = ioc_result.output if ioc_result.status == "success" else {}
+
+    reasoning_trace.append(ReasoningStep(
+        3, "act", f"Executed {len(step3_results)} tools. "
+        f"Anomaly={effective_anomaly:.4f}, Patterns={pattern_name or 'none'}, "
+        f"MITRE={len(individual_mitre)}, TI={ti_result.output.get('malicious_count',0)} malicious, "
+        f"IOCs={ioc_data.get('suspicious_count',0)} suspicious",
+        tool_results=step3_results,
+        duration_ms=(time.time()-step3_start)*1000
+    ).to_dict())
+
+    # ── STEP 4: SYNTHESIZE — Merge evidence ────────────────────────────────
+    step4_start = time.time()
     current_record = SessionRecord(
-        session_id=session_id,
-        timestamp=timestamp,
-        epoch=epoch,
-        sequence=sequence,
-        event_types=event_types,
-        anomaly_score=effective_anomaly,
-        mitre_mappings=individual_mitre,
-        events_summary=events_summary,
-        entity_id=entity_id
+        session_id=session_id, timestamp=timestamp, epoch=epoch,
+        sequence=sequence, event_types=event_types,
+        anomaly_score=effective_anomaly, mitre_mappings=individual_mitre,
+        events_summary=events_summary, entity_id=entity_id
     )
-    
-    # Store in memory for correlation
     update_memory(current_record)
 
-    # ── Step 2: Time-aware correlation ─────────────────────────────────────────
     correlation = correlate_events(entity_id)
-
-    # ── Step 3: Hypothesis loop & compound intelligence ───────────────────────
     hypothesis = build_hypothesis(correlation.combined_event_types)
-    
-    # Calculate actual correlation depth
-    suspicious_events = [et for et in event_types if et != "NORMAL"]
-    if hypothesis:
-        actual_depth = 3
-    elif correlation.is_correlated:
-        actual_depth = 2
-    elif len(suspicious_events) > len(set(suspicious_events)) or pattern_name:
-        actual_depth = 1
-    else:
-        actual_depth = 0
-        
+
+    # Correlation depth
+    if hypothesis: actual_depth = 3
+    elif correlation.is_correlated: actual_depth = 2
+    elif len(suspicious_types) > len(set(suspicious_types)) or pattern_name: actual_depth = 1
+    else: actual_depth = 0
     correlation.correlation_depth = actual_depth
 
     compound = refine_with_models(hypothesis, correlation, effective_anomaly, individual_mitre)
 
-    # ── Step 4: Build explainability reasoning ────────────────────────────────
+    reasoning_trace.append(ReasoningStep(
+        4, "synthesize",
+        f"Correlation depth={actual_depth}, Hypothesis={hypothesis or 'none'}, "
+        f"Compound anomaly={compound.compound_anomaly_score:.4f}, "
+        f"Compound MITRE={len(compound.compound_mitre_mappings)}",
+        duration_ms=(time.time()-step4_start)*1000
+    ).to_dict())
+
+    # ── STEP 5: DECIDE ─────────────────────────────────────────────────────
+    step5_start = time.time()
+
+    # Build why_flagged
     why_flagged = []
-    
-    # Prioritize pattern explanation if one fired
     if pattern_name:
-        why_flagged.append(f"Heuristic Pattern Matched: {pattern_name} (Score: {pattern_score:.2f})")
-        
+        why_flagged.append(f"Heuristic Pattern: {pattern_name} (Score: {pattern_score:.2f})")
     if compound.compound_anomaly_score > 0.4:
-        why_flagged.append(f"High anomaly deviation detected (score: {compound.compound_anomaly_score:.4f})")
+        why_flagged.append(f"High anomaly deviation (score: {compound.compound_anomaly_score:.4f})")
     elif compound.compound_anomaly_score > 0.0 and not pattern_name:
         why_flagged.append(f"Anomaly score: {compound.compound_anomaly_score:.4f}")
     if compound.compound_mitre_mappings:
-        why_flagged.append(f"MITRE techniques matched: {', '.join(compound.compound_mitre_mappings)}")
+        why_flagged.append(f"MITRE techniques: {', '.join(compound.compound_mitre_mappings)}")
     if hypothesis:
-        why_flagged.append(f"Multi-stage pattern matched: {hypothesis.replace('_', ' ')}")
+        why_flagged.append(f"Campaign pattern: {hypothesis.replace('_',' ')}")
     if correlation.correlation_depth > 1:
-        why_flagged.append(f"Cross-session correlation: {correlation.correlation_depth} sessions linked")
-    # Ensure at least one reason
-    suspicious_types = [et for et in event_types if et != "NORMAL"]
+        why_flagged.append(f"Cross-session correlation: {correlation.correlation_depth} sessions")
+    if ti_result.output.get("malicious_count", 0) > 0:
+        why_flagged.append(f"Threat intel: {ti_result.output['malicious_count']} malicious indicator(s)")
+    if ioc_data.get("suspicious_count", 0) > 3:
+        why_flagged.append(f"IOC extraction: {ioc_data['suspicious_count']} suspicious indicators")
     if not why_flagged and suspicious_types:
-        why_flagged.append(f"Suspicious event types detected: {', '.join(dict.fromkeys(suspicious_types))}")
+        why_flagged.append(f"Suspicious events: {', '.join(dict.fromkeys(suspicious_types))}")
     if not why_flagged:
         why_flagged.append("Session recorded for baseline monitoring")
 
-    # ── Step 5: Evidence-based confidence ──────────────────────────────────────
     evidence = EvidenceLedger(
         lstm_score=compound.compound_anomaly_score,
         rag_matches=len(compound.compound_mitre_mappings),
         correlation_depth=correlation.correlation_depth,
-        threat_intel_score=threat_intel_score
+        threat_intel_score=ti_score_val,
+        pattern_score=pattern_score,
+        ioc_count=ioc_data.get("suspicious_count", 0),
     )
     confidence = compute_confidence(evidence)
-
-    # ── Step 6: Build timeline and severity (needed by decision engine) ────────
-    timeline = build_timeline(correlation, current_record)
-    severity = compute_severity(
-        compound.compound_anomaly_score,
-        correlation.correlation_depth,
-        len(compound.compound_mitre_mappings),
-        threat_intel_score
-    )
-
-    # ── Step 7: Decision engine (factors in severity) ─────────────────────────
+    severity = compute_severity(compound.compound_anomaly_score, correlation.correlation_depth,
+                                len(compound.compound_mitre_mappings), ti_score_val)
     decision = decide_action(confidence, severity)
+    risk_score = compute_risk_score(compound.compound_anomaly_score, confidence, ti_score_val,
+                                    pattern_score, correlation.correlation_depth)
 
-    # (timeline and severity already computed above for decision engine)
+    # Incident type
+    if pattern_name == "BRUTE_FORCE": itype = "Brute Force Attack Attempt"
+    elif pattern_name == "SUSPICIOUS_EXECUTION_CHAIN": itype = "Suspicious Execution Chain"
+    elif pattern_name == "PRIVILEGE_ESCALATION_SPIKE": itype = "Privilege Escalation Attempt"
+    elif pattern_name == "CREDENTIAL_HARVESTING": itype = "Credential Harvesting Campaign"
+    elif pattern_name == "DEFENSE_EVASION_CHAIN": itype = "Defense Evasion Campaign"
+    elif pattern_name == "DATA_STAGING": itype = "Data Staging & Exfiltration"
+    elif pattern_name == "RECON_TO_EXPLOIT": itype = "Reconnaissance to Exploitation"
+    elif pattern_name == "C2_COMMUNICATION": itype = "Command & Control Communication"
+    elif actual_depth == 0: itype = "Single Session Activity"
+    elif actual_depth == 1: itype = "Repeated Suspicious Activity"
+    elif actual_depth == 2: itype = "Correlated Attack Campaign"
+    else: itype = "Multi-Stage Attack"
 
-    # ── Step 8: Structured incident ────────────────────────────────────────────
-    if pattern_name == "BRUTE_FORCE":
-        itype = "Brute Force Attack Attempt"
-    elif pattern_name == "SUSPICIOUS_EXECUTION_CHAIN":
-        itype = "Suspicious Execution Chain"
-    elif pattern_name == "PRIVILEGE_ESCALATION_SPIKE":
-        itype = "Privilege Escalation Attempt"
-    elif actual_depth == 0:
-        itype = "Single Session Activity"
-    elif actual_depth == 1:
-        itype = "Repeated Suspicious Activity"
-    elif actual_depth == 2:
-        itype = "Correlated Attack Campaign"
-    else:
-        itype = "Multi-Stage Attack"
+    reasoning_trace.append(ReasoningStep(
+        5, "decide", f"Severity={severity}, Confidence={confidence:.1%}, Decision={decision}, Risk={risk_score}/100",
+        duration_ms=(time.time()-step5_start)*1000
+    ).to_dict())
 
+    # ── STEP 6: EXPLAIN & PLAYBOOK ─────────────────────────────────────────
+    step6_start = time.time()
+    timeline = build_timeline(correlation, current_record)
     incident = {
-        "incident_id": str(uuid.uuid4()),
-        "incident_type": itype,
-        "timeline": timeline,
+        "incident_id": str(uuid.uuid4()), "incident_type": itype,
         "entities": list(dict.fromkeys([entity_id] + [s.entity_id for s in correlation.correlated_sessions])),
-        "severity": severity,
-        "confidence": confidence,
-        "decision": decision,
-        "why_flagged": why_flagged,
+        "severity": severity, "confidence": confidence, "decision": decision,
         "correlation_depth": correlation.correlation_depth,
-        "campaign_pattern": hypothesis,
-        "compound_anomaly_score": compound.compound_anomaly_score,
+        "campaign_pattern": hypothesis, "compound_anomaly_score": compound.compound_anomaly_score,
         "compound_mitre_mappings": compound.compound_mitre_mappings,
-        "detection_improvement": compound.improvement_detail,
-        "evidence": evidence.to_dict(),
+        "detection_improvement": compound.improvement_detail, "evidence": evidence.to_dict(),
     }
-
-    # ── Step 9: LLM explanation (narrative only) ───────────────────────────────
     llm_explanation = generate_agent_explanation(incident, timeline, severity, confidence)
 
-    # ── Step 10: Return structured response ────────────────────────────────────
+    # Tool 6: Playbook
+    playbook_result = run_playbook_tool(itype, severity, hypothesis, pattern_name)
+    tool_results_all.append(playbook_result.to_dict())
+    playbook_data = playbook_result.output if playbook_result.status == "success" else {}
+
+    reasoning_trace.append(ReasoningStep(
+        6, "explain", f"Generated explanation and playbook ({playbook_data.get('name','generic')})",
+        duration_ms=(time.time()-step6_start)*1000
+    ).to_dict())
+
+    total_ms = (time.time() - t_start) * 1000
+
+    # ── RETURN ─────────────────────────────────────────────────────────────
     return {
         "anomaly_score": effective_anomaly,
         "compound_anomaly_score": compound.compound_anomaly_score,
         "mitre_mappings": individual_mitre,
         "compound_mitre_mappings": compound.compound_mitre_mappings,
         "correlated_timeline": timeline,
-        "incident_type": incident["incident_type"],
+        "incident_type": itype,
         "severity": severity,
         "confidence": confidence,
         "decision": decision,
+        "risk_score": risk_score,
         "why_flagged": why_flagged,
         "correlation_depth": correlation.correlation_depth,
         "campaign_pattern": hypothesis or pattern_name,
@@ -694,4 +518,9 @@ def analyze_with_agent(
         "llm_explanation": llm_explanation,
         "detection_improvement": compound.improvement_detail or None,
         "incident_id": incident["incident_id"],
+        "reasoning_trace": reasoning_trace,
+        "tool_results": tool_results_all,
+        "iocs_extracted": ioc_data,
+        "response_playbook": playbook_data,
+        "total_analysis_ms": round(total_ms, 1),
     }

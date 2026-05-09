@@ -344,6 +344,15 @@
               <div class="agent-metric-key">DECISION</div>
               <div class="agent-metric-val" id="am-decision">—</div>
             </div>
+            <div class="agent-metric">
+              <div class="agent-metric-key">RISK SCORE</div>
+              <div class="agent-metric-val" id="am-risk-score">—</div>
+              <div class="metric-bar-wrap"><div class="metric-bar" id="am-risk-bar"></div></div>
+            </div>
+            <div class="agent-metric">
+              <div class="agent-metric-key">ANALYSIS TIME</div>
+              <div class="agent-metric-val" id="am-analysis-time">—</div>
+            </div>
           </div>
           <div class="agent-detail-row" id="agent-why-flagged-row" style="display:none">
             <div class="agent-detail-label">WHY FLAGGED</div>
@@ -427,8 +436,32 @@
               </div>
               <div class="r-section-body" id="r-agent-explanation">—</div>
             </div>
+
+            <!-- Agent: IOC Extraction (only in agent mode) -->
+            <div class="r-section r-section-full hidden" id="r-ioc-section">
+              <div class="r-section-head" style="border-left:2px solid var(--cyan,var(--blue));">
+                EXTRACTED IOCs
+              </div>
+              <div class="r-section-body" id="r-ioc-table">—</div>
+            </div>
+
+            <!-- Agent: Response Playbook (only in agent mode) -->
+            <div class="r-section r-section-full hidden" id="r-playbook-section">
+              <div class="r-section-head" style="border-left:2px solid var(--cyan,var(--blue));">
+                RESPONSE PLAYBOOK
+              </div>
+              <div class="r-section-body" id="r-playbook">—</div>
+            </div>
           </div>
 
+        </div>
+
+        <!-- Agent: Reasoning Trace (full-width below report) -->
+        <div class="agent-trace-section hidden" id="r-reasoning-trace-section">
+          <details class="raw-toggle" open>
+            <summary class="raw-summary">AGENT REASONING TRACE</summary>
+            <div class="reasoning-trace" id="r-reasoning-trace">—</div>
+          </details>
         </div>
 
         <!-- Raw LLM toggle -->
