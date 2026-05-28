@@ -1,0 +1,628 @@
+/* src/pages/Investigate/components/ReportPanel.module.css */
+
+.wrapper {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  animation: fadeIn 0.35s ease both;
+}
+
+@keyframes fadeIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:none; } }
+
+/* ── Report header bar ── */
+.reportBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--border-0);
+  flex-shrink: 0;
+}
+
+.reportBarLeft {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.incidentId {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-1);
+  font-weight: 600;
+}
+
+.ts {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-3);
+}
+
+.reportBarRight {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sevPill {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 3px 9px;
+  border-radius: 12px;
+  border: 1px solid;
+}
+
+.decision {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 3px 8px;
+  border-radius: 4px;
+  border: 1px solid;
+}
+
+.copyBtn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-1);
+  border-radius: 4px;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.copyBtn:hover {
+  color: var(--cyan);
+  border-color: rgba(0,212,255,0.3);
+}
+
+/* ── Metric strip ── */
+.metricStrip {
+  display: flex;
+  gap: 0;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--border-0);
+  flex-shrink: 0;
+  overflow-x: auto;
+}
+
+.metricBlock {
+  flex: 1;
+  min-width: 100px;
+  padding: 12px 14px;
+  border-right: 1px solid var(--border-0);
+}
+
+.metricBlock:last-child { border-right: none; }
+
+.metricKey {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 0.08em;
+  color: var(--text-3);
+  margin-bottom: 4px;
+}
+
+.metricVal {
+  font-family: var(--font-mono);
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-0);
+  margin-bottom: 6px;
+  line-height: 1;
+}
+
+.barWrap {
+  height: 3px;
+  background: var(--bg-3);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.bar {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.6s ease;
+}
+
+/* ── Report body ── */
+.reportBody {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  gap: 12px;
+}
+
+.colLeft, .colRight {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ── Section ── */
+.section {
+  background: var(--bg-1);
+  border: 1px solid var(--border-0);
+  border-radius: var(--radius-md);
+  border-left: 2px solid var(--border-2);
+  overflow: hidden;
+}
+
+.sectionHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 12px;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--border-0);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: var(--text-2);
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s ease;
+}
+
+.sectionHead:hover { background: var(--bg-3); }
+
+.sectionBody {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--text-1);
+  line-height: 1.6;
+}
+
+.muted { color: var(--text-3); font-size: 11px; font-style: italic; }
+
+/* ── Kill chain ── */
+.killChainPath {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.kcStage {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 3px 8px;
+  border-radius: 3px;
+  background: rgba(0,212,255,0.08);
+  color: var(--cyan);
+  border: 1px solid rgba(0,212,255,0.2);
+}
+
+/* ── MITRE ── */
+.mitreTags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 6px;
+}
+
+.mitreTag {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 3px;
+  background: rgba(170,102,255,0.1);
+  color: var(--purple);
+  border: 1px solid rgba(170,102,255,0.2);
+}
+
+.mitreTagAgent {
+  background: rgba(0,212,255,0.08);
+  color: var(--cyan);
+  border-color: rgba(0,212,255,0.2);
+}
+
+.subLabel {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-3);
+  letter-spacing: 0.06em;
+  margin: 6px 0 4px;
+}
+
+/* ── Attack graph ── */
+.graphPath {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.graphNode {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-1);
+}
+
+.arrow { color: var(--text-3); }
+
+/* ── Threat intel ── */
+.tiList { display: flex; flex-direction: column; gap: 5px; }
+
+.tiRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  background: var(--bg-2);
+  border-radius: 4px;
+}
+
+.tiBadge {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 5px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.tiVal {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tiScore {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--red);
+}
+
+/* ── RAG snippets ── */
+.ragSnip {
+  padding: 6px 8px;
+  background: var(--bg-2);
+  border-radius: 4px;
+  border-left: 2px solid var(--border-2);
+  font-size: 11px;
+  color: var(--text-2);
+  line-height: 1.5;
+  margin-bottom: 6px;
+  font-family: var(--font-mono);
+}
+
+/* ── Explanation ── */
+.explanation {
+  font-size: 12px;
+  color: var(--text-1);
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
+.warning {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 8px;
+  padding: 6px 10px;
+  background: rgba(255,152,0,0.08);
+  border: 1px solid rgba(255,152,0,0.2);
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--orange);
+}
+
+/* ── Response list ── */
+.responseList {
+  padding-left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.responseList li {
+  font-size: 12px;
+  color: var(--text-1);
+  line-height: 1.5;
+}
+
+/* ── Playbook ── */
+.playbook { display: flex; flex-direction: column; gap: 8px; }
+
+.playbookName {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-0);
+}
+
+.playbookSla {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--orange);
+}
+
+.pbGroup { display: flex; flex-direction: column; gap: 3px; }
+
+.pbPriority {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  margin-bottom: 4px;
+}
+
+.pbAction {
+  display: flex;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-1);
+  line-height: 1.5;
+}
+
+.pbBullet { color: var(--text-3); flex-shrink: 0; margin-top: 1px; }
+
+/* ── Why flagged ── */
+.whyList {
+  padding-left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.whyList li {
+  font-size: 12px;
+  color: var(--orange);
+  line-height: 1.5;
+}
+
+/* ── Campaign ── */
+.campaignBadge {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--purple);
+  padding: 4px 0;
+}
+
+/* ── Timeline ── */
+.timeline { display: flex; flex-direction: column; gap: 0; }
+
+.tlRow {
+  display: flex;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-0);
+}
+
+.tlDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--cyan);
+  flex-shrink: 0;
+  margin-top: 3px;
+  box-shadow: 0 0 5px rgba(0,212,255,0.4);
+}
+
+.tlContent { display: flex; flex-direction: column; gap: 2px; }
+
+.tlTs {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-3);
+}
+
+.tlEvt {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--cyan);
+  font-weight: 600;
+}
+
+.tlDesc {
+  font-size: 10px;
+  color: var(--text-2);
+}
+
+/* ── IOC Table ── */
+.iocTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.iocTable th {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 0.08em;
+  color: var(--text-3);
+  text-align: left;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border-0);
+}
+
+.iocTable td {
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border-0);
+  vertical-align: middle;
+}
+
+.iocType {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  padding: 2px 5px;
+  border-radius: 3px;
+  background: rgba(68,136,255,0.1);
+  color: var(--blue);
+  border: 1px solid rgba(68,136,255,0.2);
+}
+
+.iocVal {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-1);
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.iocStatus {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
+}
+
+/* ── Reasoning Trace ── */
+.traceSection {
+  border-top: 1px solid var(--border-0);
+  flex-shrink: 0;
+  background: var(--bg-1);
+}
+
+.traceSectionHead {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 10px 16px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: var(--text-2);
+  font-weight: 600;
+  cursor: pointer;
+  background: none;
+  border: none;
+  border-bottom: 1px solid transparent;
+  transition: all 0.15s ease;
+  text-align: left;
+}
+
+.traceSectionHead:hover {
+  color: var(--cyan);
+  background: rgba(0,212,255,0.03);
+  border-bottom-color: var(--border-0);
+}
+
+.traceBadge {
+  margin-left: 4px;
+  padding: 1px 6px;
+  background: var(--bg-3);
+  border: 1px solid var(--border-1);
+  border-radius: 10px;
+  font-size: 8px;
+  color: var(--text-3);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+}
+
+.traceChevron {
+  margin-left: auto;
+  color: var(--text-3);
+  display: flex;
+  align-items: center;
+}
+
+.trace {
+  padding: 10px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 300px;
+  overflow-y: auto;
+  border-top: 1px solid var(--border-0);
+}
+
+.traceStep {
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border-left: 2px solid var(--border-1);
+  background: var(--bg-2);
+}
+
+.traceHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.tracePhase {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--cyan);
+  letter-spacing: 0.06em;
+}
+
+.traceDuration {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-3);
+}
+
+.traceContent {
+  font-size: 11px;
+  color: var(--text-2);
+  line-height: 1.5;
+}
+
+/* ── Raw JSON ── */
+.rawSection {
+  border-top: 1px solid var(--border-0);
+  padding: 12px 16px;
+  flex-shrink: 0;
+}
+
+.rawToggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: var(--text-3);
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 2px 0;
+  transition: color 0.15s ease;
+}
+
+.rawToggle:hover { color: var(--text-1); }
+
+.rawBody {
+  margin-top: 10px;
+  padding: 12px;
+  background: var(--bg-0);
+  border: 1px solid var(--border-0);
+  border-radius: var(--radius-md);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-2);
+  overflow-x: auto;
+  max-height: 300px;
+  overflow-y: auto;
+  line-height: 1.5;
+}

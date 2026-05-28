@@ -1,0 +1,143 @@
+/* ─────────────────────────────────────────────────────────────────
+   SOC Analyst — Global Design System
+   ───────────────────────────────────────────────────────────────── */
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  /* Core palette */
+  --bg-0: #050709;
+  --bg-1: #0a0d12;
+  --bg-2: #0f1318;
+  --bg-3: #161c24;
+  --bg-4: #1c2430;
+
+  /* Borders */
+  --border-0: #1a2030;
+  --border-1: #232c3a;
+  --border-2: #2c3848;
+
+  /* Text */
+  --text-0: #e8edf5;
+  --text-1: #b0bcc8;
+  --text-2: #6e7e8e;
+  --text-3: #3e4e5e;
+
+  /* Accent colors */
+  --cyan:    #00d4ff;
+  --cyan-dim: #004466;
+  --green:   #00e676;
+  --green-dim: #003320;
+  --red:     #ff4444;
+  --red-dim:  #330a0a;
+  --orange:  #ff9800;
+  --orange-dim: #2a1800;
+  --blue:    #4488ff;
+  --blue-dim: #0a1a40;
+  --purple:  #aa66ff;
+  --purple-dim: #1a0a33;
+  --yellow:  #ffd740;
+  --yellow-dim: #2a2200;
+
+  /* Severity */
+  --sev-critical: #ff4444;
+  --sev-high:     #ff9800;
+  --sev-medium:   #ffd740;
+  --sev-low:      #00e676;
+
+  /* Fonts */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+
+  /* Sizing */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.5);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.6);
+  --shadow-lg: 0 8px 32px rgba(0,0,0,0.7);
+  --glow-cyan:  0 0 20px rgba(0,212,255,0.15);
+  --glow-red:   0 0 20px rgba(255,68,68,0.15);
+  --glow-green: 0 0 20px rgba(0,230,118,0.15);
+}
+
+html { height: 100%; }
+
+body {
+  font-family: var(--font-sans);
+  background: var(--bg-0);
+  color: var(--text-0);
+  min-height: 100vh;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Scrollbars ── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: var(--bg-1); }
+::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-3); }
+
+/* ── Selection ── */
+::selection { background: var(--cyan-dim); color: var(--cyan); }
+
+/* ── Typography ── */
+h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.02em; }
+code, pre, .mono { font-family: var(--font-mono); }
+
+/* ── Utilities ── */
+.hidden { display: none !important; }
+.flex { display: flex; }
+.flex-col { display: flex; flex-direction: column; }
+.items-center { align-items: center; }
+.justify-between { justify-content: space-between; }
+.gap-2 { gap: 8px; }
+.gap-3 { gap: 12px; }
+.gap-4 { gap: 16px; }
+.w-full { width: 100%; }
+.h-full { height: 100%; }
+
+/* ── Button resets ── */
+button {
+  font-family: var(--font-sans);
+  cursor: pointer;
+  border: none;
+  background: none;
+  transition: all 0.15s ease;
+}
+
+/* ── Animations ── */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes slideIn {
+  from { opacity: 0; transform: translateX(-12px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes scanline {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(100%); }
+}
+@keyframes glow-pulse {
+  0%, 100% { box-shadow: 0 0 8px rgba(0,212,255,0.2); }
+  50% { box-shadow: 0 0 24px rgba(0,212,255,0.5); }
+}
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.animate-fade-in { animation: fadeIn 0.3s ease both; }
+.animate-slide-in { animation: slideIn 0.3s ease both; }

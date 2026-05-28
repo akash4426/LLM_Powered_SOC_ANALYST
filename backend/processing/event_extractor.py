@@ -47,6 +47,48 @@ EVENT_TYPE_MAP: Dict[str, int] = {
 }
 NUM_EVENT_TYPES = len(EVENT_TYPE_MAP)
 
+# ── Rich MITRE descriptions for RAG query expansion ──────────────────────────
+# Maps event_type → list of natural-language phrases that help the embedder
+# find relevant MITRE ATT&CK technique documents.
+_MITRE_RICH_CONTEXT: Dict[str, List[str]] = {
+    LOGIN: [
+        "brute force password spraying credential stuffing failed authentication",
+        "T1110 Brute Force valid account compromise unauthorized access",
+    ],
+    PRIV_ESC: [
+        "privilege escalation sudo token impersonation UAC bypass elevation",
+        "T1548 T1134 abuse elevation control mechanism access token manipulation",
+    ],
+    SUSPICIOUS_EXEC: [
+        "malicious code execution PowerShell mimikatz credential dumping LSASS",
+        "T1059 command scripting interpreter T1003 OS credential dumping",
+    ],
+    OUTBOUND_CONN: [
+        "command and control C2 beaconing application layer protocol exfiltration",
+        "T1071 application layer protocol T1041 exfiltration over C2 channel",
+    ],
+    FILE_ACCESS: [
+        "data collection sensitive file access local data staging archive",
+        "T1005 data from local system T1074 data staged T1560 archive collected data",
+    ],
+    RECON: [
+        "reconnaissance network scanning host discovery account enumeration",
+        "T1018 remote system discovery T1087 account discovery T1595 active scanning",
+    ],
+    LATERAL_MOVE: [
+        "lateral movement remote services pass the hash SMB WMI PsExec",
+        "T1021 remote services T1550 use alternate authentication material T1570 lateral tool transfer",
+    ],
+    DEFENSE_EVADE: [
+        "defense evasion shadow copy deletion antivirus disable log clearing",
+        "T1562 impair defenses T1070 indicator removal T1485 data destruction",
+    ],
+    EXFILTRATION: [
+        "data exfiltration large transfer DNS tunneling upload sensitive data",
+        "T1041 exfiltration over C2 T1048 exfiltration over alternative protocol T1567 web service",
+    ],
+}
+
 
 @dataclass
 class SecurityEvent:
@@ -244,12 +286,41 @@ def events_to_sequence(events: List[SecurityEvent]) -> List[int]:
 
 def get_mitre_query(events: List[SecurityEvent]) -> str:
     """
-    Build a compound search query from event MITRE hints
-    for RAG retrieval against the MITRE ATT&CK vector DB.
+    Build a rich, semantically dense search query from detected events for
+    RAG retrieval against the MITRE ATT&CK vector database.
+
+    Strategy:
+      1. Collect unique event types that fired.
+      2. For each type, add both the short MITRE hint (e.g. "T1110 Brute Force")
+         AND the expanded natural-language phrases from _MITRE_RICH_CONTEXT so
+         the embedding model gets a richer signal.
+      3. Deduplicate and join — longer queries give the vector search more
+         surface area to match relevant technique documents.
+      4. If no typed events, fall back to raw log text of high-severity events
+         (capped at 3 to avoid token bloat).
     """
-    hints = list({e.mitre_hint for e in events if e.mitre_hint})
-    if not hints:
-        # Fall back to raw text of high-severity events
-        high = [e.raw for e in events if e.severity == "high"]
-        return " ".join(high[:3]) if high else "suspicious activity"
-    return " | ".join(hints)
+    seen_types: set = set()
+    query_parts: List[str] = []
+
+    for event in events:
+        etype = event.event_type
+        if etype == NORMAL or etype in seen_types:
+            continue
+        seen_types.add(etype)
+
+        # Add the short MITRE hint
+        if event.mitre_hint:
+            query_parts.append(event.mitre_hint)
+
+        # Add the rich natural-language expansion for this event type
+        for phrase in _MITRE_RICH_CONTEXT.get(etype, []):
+            query_parts.append(phrase)
+
+    if not query_parts:
+        # Fallback: use raw text from high-severity events, limited
+        high = [e.raw for e in events if e.severity in ("high", "critical")]
+        if not high:
+            high = [e.raw for e in events if e.event_type != NORMAL]
+        return " ".join(high[:3]) if high else "suspicious activity detection"
+
+    return " ".join(query_parts)
