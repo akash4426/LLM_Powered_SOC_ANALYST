@@ -669,3 +669,620 @@ MIT License — see [LICENSE](LICENSE) for details.
 [⬆ Back to top](#-llm-powered-soc-analyst)
 
 </div>
+
+---
+
+---
+
+# 🆕 v5.0 — React Frontend & RAG Accuracy Upgrade
+
+> This section documents every change introduced in the v5.0 update.  
+> Use it as a revision guide to quickly understand **what changed, why it changed, and how it fits the system**.
+
+---
+
+## 📑 v5.0 Change Index
+
+| Change | Area | File(s) |
+|--------|------|---------|
+| [React Frontend](#-react-frontend-architecture) | Frontend | `soc-react-frontend/` |
+| [RAG Query Enrichment](#-rag-query-enrichment-event_extractorpy) | Backend | `backend/processing/event_extractor.py` |
+| [MMR Retrieval (RAG Engine)](#-mmr-retrieval-rag_enginepy) | Backend | `backend/rag/rag_engine.py` |
+| [Reasoning Trace Fix](#-reasoning-trace-ui-fix) | Frontend | `ReportPanel.jsx` |
+| [Favicon](#-favicon) | Frontend | `public/favicon.svg` |
+| [Evaluate Section Removed](#-evaluate-section-removed) | Frontend | `App.jsx`, `Topbar.jsx` |
+
+---
+
+## ⚛️ React Frontend Architecture
+
+The original `frontend/index.html + app.js` vanilla stack has been replaced with a fully featured **React 18 + Vite** application living in `soc-react-frontend/`.
+
+### Why React?
+The old vanilla frontend had all state in global DOM variables, making it impossible to add features like real-time loading states, collapsible sections, or per-component re-rendering without rewriting the whole file. React's component model solves this cleanly.
+
+### Project Structure
+
+```
+soc-react-frontend/
+├── index.html                        ← Vite entry (favicon, meta tags, fonts)
+├── vite.config.js                    ← Vite config (port 5173)
+├── public/
+│   └── favicon.svg                   ← Custom SOC shield favicon
+└── src/
+    ├── main.jsx                      ← React DOM root
+    ├── App.jsx                       ← Auth gate + page router
+    ├── App.module.css                ← Splash screen
+    ├── index.css                     ← Global design system (CSS variables)
+    │
+    ├── api/
+    │   └── socApi.js                 ← Axios client with JWT interceptor
+    │
+    ├── constants/
+    │   └── scenarios.js              ← Pre-loaded scenarios, pipeline steps, colors
+    │
+    ├── context/
+    │   └── AuthContext.jsx           ← JWT auth state + API health polling
+    │
+    ├── components/
+    │   └── Topbar/
+    │       ├── Topbar.jsx            ← Nav bar (live clock, status, user chip)
+    │       └── Topbar.module.css
+    │
+    └── pages/
+        ├── Login/
+        │   ├── Login.jsx             ← JWT login form + demo credentials
+        │   └── Login.module.css
+        │
+        ├── Investigate/
+        │   ├── Investigate.jsx       ← 3-panel investigation page
+        │   ├── Investigate.module.css
+        │   └── components/
+        │       ├── EmptyState.jsx/.module.css    ← Idle placeholder
+        │       ├── LoadingState.jsx/.module.css  ← Animated pipeline progress
+        │       ├── PipelineProgress.jsx          ← Stub (inlined)
+        │       └── ReportPanel.jsx/.module.css   ← Full incident report renderer
+        │
+        └── RagTest/
+            ├── RagTest.jsx           ← MITRE ATT&CK RAG semantic search UI
+            └── RagTest.module.css
+```
+
+### How to Run
+
+```bash
+cd soc-react-frontend
+npm install
+npm run dev          # → http://localhost:5173
+
+# Backend must be running on port 8000 first:
+python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
+```
+
+### Design System (`index.css`)
+
+All colors, fonts, and spacing live as CSS custom properties on `:root`:
+
+```css
+--bg-0: #050709;          /* page background */
+--bg-1: #0a0d12;          /* panel background */
+--cyan: #00d4ff;          /* primary accent */
+--blue: #4488ff;          /* secondary accent */
+--green: #00e676;         /* success / low severity */
+--orange: #ff9800;        /* medium severity */
+--red: #ff4444;           /* critical / errors */
+--font-mono: 'JetBrains Mono', monospace;
+```
+
+### Authentication Flow
+
+```
+User loads app
+   ↓
+AuthContext checks localStorage for JWT token
+   ↓
+If no token → render <Login />
+   ↓
+User submits credentials → POST /auth/token
+   ↓
+Token stored in localStorage + AuthContext state
+   ↓
+Every API request automatically adds Authorization: Bearer <token>
+   ↓
+AuthContext polls GET /health every 10s → shows ONLINE/OFFLINE in Topbar
+```
+
+### Investigation Page — 3-Panel Layout
+
+```
+┌─────────────────┬──────────────────────────────┬─────────────────┐
+│   LEFT PANEL    │       CENTER PANEL           │   RIGHT PANEL   │
+│                 │                              │                 │
+│ Scenario picker │ [idle]  → EmptyState         │ Event taxonomy  │
+│ Log textarea    │ [run]   → LoadingState       │ Detection feed  │
+│ Pipeline stack  │ [done]  → ReportPanel        │ Severity scale  │
+│ Agent mode      │ [error] → Error + retry      │                 │
+│                 │                              │                 │
+│ [RUN ⌘↵]        │                              │                 │
+└─────────────────┴──────────────────────────────┴─────────────────┘
+```
+
+**Left Panel — controls:**
+- **Scenario Picker**: 4 pre-loaded attack scenarios (brute force, ransomware, lateral movement, APT). Clicking one fills the textarea automatically.
+- **Log Textarea**: Terminal-styled with file count, char count footer. Accepts paste or file upload (`.log .txt .csv .json`).
+- **Pipeline Stack**: Static reference table showing what each stage does.
+- **Agent Mode Toggle**: When on, calls `POST /investigate/agent` (8-stage). When off, calls `POST /investigate` (7-stage).
+- **Entity ID**: Optional — if supplied, the agent correlates across past sessions for that entity.
+
+**Center Panel — states:**
+- `idle` — ASCII art empty state with instructions.
+- `loading` — Animated step list showing which pipeline stage is running, with elapsed timer.
+- `success` — Full `ReportPanel` rendered from API response.
+- `error` — Error message + retry button.
+
+**Right Panel — reference:**
+- **Event Taxonomy**: Color-coded list of all 10 event types with codes (EXFIL, EVADE, etc.).
+- **Detection Log**: Live feed of system messages, info, and investigation events. Autoscrolls.
+- **Severity Scale**: Reference card for CRITICAL / HIGH / MEDIUM / LOW with action guidance.
+
+### API Client (`socApi.js`)
+
+```javascript
+// All calls go through this axios instance
+const api = axios.create({ baseURL: 'http://localhost:8000' });
+
+// Automatically attaches JWT to every request
+api.interceptors.request.use(config => {
+  const token = localStorage.getItem('soc_token');
+  if (token) config.headers.Authorization = `Bearer ${token}`;
+  return config;
+});
+
+// Exported functions used by pages:
+investigate(logs)                    // POST /investigate
+investigateAgent(logs, entityId)     // POST /investigate/agent
+ragTest(query, k)                    // POST /rag-test
+healthCheck()                        // GET /health
+login(username, password)            // POST /auth/token
+```
+
+### ReportPanel — Data Rendering
+
+The `ReportPanel` component handles both standard (`/investigate`) and agent (`/investigate/agent`) responses:
+
+```javascript
+// Agent response structure:
+{
+  severity, risk_score, confidence, decision,   // top-level agent fields
+  pipeline_report: {                             // standard pipeline output
+    incident_id, kill_chain_path, mitre_techniques,
+    threat_intel, rag_snippets, llm_explanation,
+    recommended_response, attack_graph, ...
+  },
+  reasoning_trace,      // 6 ReAct steps
+  iocs_extracted,       // IOC table data
+  response_playbook,    // IMMEDIATE/SHORT_TERM/LONG_TERM actions
+  correlated_timeline,  // cross-session events
+  why_flagged,          // human-readable flag reasons
+  campaign_pattern,     // detected attack campaign
+}
+
+// Standard response structure (no agent wrapper):
+{
+  incident_id, severity, anomaly_score, confidence,
+  kill_chain_path, mitre_techniques, threat_intel,
+  rag_snippets, llm_explanation, recommended_response,
+  attack_graph, events_analyzed, session_count, ...
+}
+```
+
+The component auto-detects which mode it's in via `agentMode` prop and renders/hides agent-specific sections accordingly.
+
+---
+
+## 🎯 RAG Query Enrichment (`event_extractor.py`)
+
+### The Problem
+
+The original `get_mitre_query()` function built a simple pipe-separated string of short MITRE hints:
+
+```python
+# OLD output (weak signal for embedder):
+"T1562 Impair Defenses | T1059 Command and Scripting Interpreter"
+```
+
+A sentence-transformer embedding model like `all-MiniLM-L6-v2` works best with **full natural-language sentences**, not short IDs. The IDs alone don't give enough context for the embedding to find the most relevant ATT&CK technique documents.
+
+### The Fix
+
+Added `_MITRE_RICH_CONTEXT` — a dictionary mapping each event type to 2 expanded natural-language descriptions:
+
+```python
+_MITRE_RICH_CONTEXT: Dict[str, List[str]] = {
+    SUSPICIOUS_EXEC: [
+        "malicious code execution PowerShell mimikatz credential dumping LSASS",
+        "T1059 command scripting interpreter T1003 OS credential dumping",
+    ],
+    LATERAL_MOVE: [
+        "lateral movement remote services pass the hash SMB WMI PsExec",
+        "T1021 remote services T1550 use alternate authentication material",
+    ],
+    # ... one entry per event type
+}
+```
+
+`get_mitre_query()` now combines:
+1. The short MITRE hint from the matched rule (e.g. `"T1562 Impair Defenses"`)
+2. Both natural-language expansion phrases for that event type
+
+Result for the same scenario:
+
+```
+# NEW output (rich semantic signal):
+"T1562 Impair Defenses
+ defense evasion shadow copy deletion antivirus disable log clearing
+ T1562 impair defenses T1070 indicator removal T1485 data destruction
+ T1059 Command and Scripting Interpreter
+ malicious code execution PowerShell mimikatz credential dumping LSASS
+ T1059 command scripting interpreter T1003 OS credential dumping"
+```
+
+This gives the embedding model a multi-sentence paragraph per event type, dramatically increasing the chance of matching the correct ATT&CK technique vectors in ChromaDB.
+
+**Fallback logic** (when no typed events are detected):
+1. Raw text of `high`/`critical` severity events
+2. Raw text of any non-NORMAL events
+3. Static string `"suspicious activity detection"`
+
+---
+
+## 🔍 MMR Retrieval (`rag_engine.py`)
+
+### The Problem
+
+The original engine used `similarity_search(query, k=3)`, which:
+- Returned only 3 snippets (often not enough context for LLM)
+- Could return near-duplicate snippets (e.g. 3 slightly different versions of the same T1059 paragraph)
+- Had no diversity mechanism
+
+### The Fix — Max Marginal Relevance (MMR)
+
+MMR is an algorithm that picks results maximizing **both relevance AND diversity**:
+
+```
+MMR score = λ · relevance(doc, query) − (1−λ) · max_similarity(doc, selected_docs)
+```
+
+- `λ = 1.0` → pure relevance (same as similarity search)
+- `λ = 0.0` → pure diversity
+- `λ = 0.6` ← our setting (favours relevance but penalises near-duplicates)
+
+**What changed in the code:**
+
+```python
+# OLD:
+results = vector_db.similarity_search(cleaned_query, k=3)
+
+# NEW:
+results = vector_db.max_marginal_relevance_search(
+    cleaned_query,
+    k=5,           # more snippets (was 3)
+    fetch_k=20,    # consider 20 candidates before MMR re-ranking
+    lambda_mult=0.6
+)
+```
+
+**Also improved:**
+
+| Improvement | Detail |
+|-------------|--------|
+| `k` raised `3 → 5` | More context for the LLM to work with |
+| Snippet deduplication | Compares first 80 chars to remove near-duplicates |
+| Better SQLite FTS fallback | Extracts `T1xxx` IDs explicitly + stops words filter |
+| Graceful MMR fallback | If ChromaDB version doesn't support MMR, falls back to `similarity_search` silently |
+
+### Full Retrieval Flow
+
+```
+get_mitre_query(events)        ← enriched multi-sentence query
+        ↓
+_get_vector_db()               ← lazy-init ChromaDB + HuggingFace embedder
+        ↓
+max_marginal_relevance_search  ← fetch 20 candidates, MMR picks best 5
+        ↓
+_deduplicate_snippets()        ← remove near-duplicates by first 80 chars
+        ↓
+return context string          ← fed into LLM prompt as RAG context
+        ↓
+[if ChromaDB fails]
+_retrieve_context_sqlite()     ← FTS on chroma.sqlite3 (guaranteed fallback)
+```
+
+---
+
+## 🔧 Reasoning Trace UI Fix
+
+### The Problem
+
+The agent's `reasoning_trace` contains 6 steps. The `act` step includes a `tool_results` array with full tool output objects — some of which contain large nested JSON. The original code fell back to `JSON.stringify(step)` when no summary field was found:
+
+```javascript
+// OLD (caused massive JSON blobs in the UI):
+<div>{step.summary || step.result || step.thought || JSON.stringify(step)}</div>
+```
+
+The `act` step has no `summary` field at the top level, causing the entire step object (including nested tool outputs) to be dumped as a wall of raw JSON text.
+
+### The Fix
+
+Replaced the fallback with a smart `extractTraceContent()` function:
+
+```javascript
+function extractTraceContent(step) {
+  // 1. Use step.description (the clean human-readable field)
+  if (step.description) return step.description;
+  // 2. Use summary or thought
+  if (step.summary)     return step.summary;
+  if (step.thought)     return step.thought;
+  // 3. For tool_results arrays, show "Ran N tool(s): name1, name2"
+  if (Array.isArray(step.tool_results) && step.tool_results.length) {
+    return `Ran ${step.tool_results.length} tool(s): ${names}`;
+  }
+  // 4. For output objects, show key: value pairs (strings/numbers only)
+  if (step.output && typeof step.output === 'object') {
+    return Object.entries(step.output)
+      .filter(([, v]) => typeof v === 'string' || typeof v === 'number')
+      .slice(0, 3)
+      .map(([k, v]) => `${k}: ${v}`)
+      .join(' · ');
+  }
+  // 5. Last resort: truncate to 120 chars (no full dump)
+  return JSON.stringify(step).slice(0, 120) + '…';
+}
+```
+
+**Also:** The trace section now starts **collapsed** by default via a `CollapsibleTrace` accordion. It shows a `"AGENT REASONING TRACE — 6 steps"` button; clicking expands it with a `max-height: 300px` scrollable area. This prevents it from dominating the screen.
+
+Phase labels are now color-coded:
+- OBSERVE → blue
+- THINK → purple
+- ACT → orange
+- SYNTHESIZE → cyan
+- DECIDE → red
+- EXPLAIN → green
+
+---
+
+## 🔖 Favicon
+
+Replaced the default Vite favicon with a custom SVG designed for the project:
+
+**File:** `soc-react-frontend/public/favicon.svg`
+
+Design elements:
+- **Dark `#050709` background** — matches the app's page background
+- **Shield shape** — standard security/SOC icon, `#00d4ff` cyan stroke matching the primary accent
+- **Detection eye** — circle with solid centre dot representing active threat monitoring
+- **Horizontal scan line** — dashed line across the shield evoking SIEM radar scanning
+- **Corner circuit tick marks** — cybersecurity/technical grid aesthetic
+- **Radial gradient glow** — subtle interior glow for depth
+
+---
+
+## 🗑️ Evaluate Section Removed
+
+The `/evaluate` page and nav button were removed because:
+- The evaluation suite runs against a mock dataset and doesn't reflect real-world performance
+- It was confusing (implied the model was being evaluated live)
+- It cluttered the navigation
+
+**Files changed:**
+- `App.jsx` — removed `import Evaluate` and `case 'evaluate'` from the router
+- `Topbar.jsx` — removed the EVALUATE nav button
+
+The backend `GET /evaluate` endpoint still exists if needed via direct API call.
+
+---
+
+## 🔄 Complete End-to-End Data Flow
+
+Here is the full journey of a request through the system, from browser click to rendered report:
+
+```
+USER clicks "RUN INVESTIGATION"
+           │
+           ▼
+[React] Investigate.jsx
+  - Validates logs not empty
+  - Sets status = 'loading', starts pipeline animation timer
+  - Calls investigateAgent(logs, entityId) from socApi.js
+           │
+           ▼ HTTP POST /investigate/agent
+           │  Headers: Authorization: Bearer <JWT>
+           │  Body: { logs: "...", entity_id: "..." }
+           │
+           ▼
+[FastAPI] backend/main.py → /investigate/agent endpoint
+  - Validates JWT token
+  - Calls run_agent_investigation(logs, entity_id)
+           │
+           ▼
+[Stage 1] backend/ingestion/log_normalizer.py
+  - Regex + JSON parsing of raw log lines
+  - Normalizes timestamps to ISO-8601
+  - Extracts: source_ip, dest_ip, user, hostname, raw
+           │
+           ▼
+[Stage 2] backend/processing/event_extractor.py
+  - classify_event() applies 9 rule sets in priority order
+  - Each rule: regex patterns + MITRE hint
+  - Output: List[SecurityEvent] with event_type, mitre_hint, severity
+  - get_mitre_query() builds enriched multi-sentence RAG query
+    using _MITRE_RICH_CONTEXT expansion phrases
+           │
+           ▼
+[Stage 3] backend/models/lstm_model.py
+  - events_to_sequence() → [0, 1, 6, 5, 8, ...] integer codes
+  - LSTM autoencoder computes reconstruction error
+  - anomaly_score = normalized reconstruction loss [0, 1]
+           │
+           ▼
+[Stage 4] backend/processing/threat_intel.py
+  - Checks IPs, commands, hashes against reputation DB
+  - Returns: is_malicious, risk_score, category per indicator
+           │
+           ▼
+[Stage 5] backend/rag/rag_engine.py
+  - retrieve_context(query, k=5) called
+  - _get_vector_db() lazily inits ChromaDB + HuggingFace embedder
+  - max_marginal_relevance_search() fetches 20 candidates, MMR picks 5
+  - _deduplicate_snippets() removes near-duplicates
+  - Returns MITRE ATT&CK technique text as context string
+           │
+           ▼
+[Stage 6] backend/reasoning/llm_agent.py
+  - Builds structured prompt: events + anomaly + TI + RAG context
+  - Calls OpenRouter API (OpenAI GPT-4o-mini)
+  - Parses JSON response: kill_chain, mitre_techniques, explanation, response
+           │
+           ▼
+[Stage 7] backend/incident_report.py + NetworkX
+  - Builds attack graph from events
+  - Maps events to kill-chain stages
+  - Reconstructs attack_path list
+           │
+           ▼
+[Stage 8] backend/reasoning/agent_layer.py (ReAct Engine)
+
+  OBSERVE:
+    - Collects all events for entity_id from session store
+    - Builds session context: event counts, severity distribution
+
+  THINK:
+    - Counts suspicious signal types
+    - Selects which tools to run and in what order
+
+  ACT (runs 5 tools):
+    ├── anomaly_score  → LSTM score (weight: 35%)
+    ├── pattern_match  → 8 heuristic patterns (weight: 10%)
+    ├── rag_lookup     → MITRE RAG with enriched query (weight: 20%)
+    ├── threat_intel   → IP/hash reputation (weight: 10%)
+    └── ioc_extractor  → parse IPs, domains, hashes, URLs from raw logs
+
+  SYNTHESIZE:
+    - Merges tool outputs
+    - Cross-session correlation (compares with entity history)
+    - Detects campaign patterns from event sequences
+    - Builds compound_mitre_mappings and correlated_timeline
+    - Computes correlation_depth
+
+  DECIDE:
+    - confidence = weighted sum of tool scores
+    - risk_score = anomaly(35) + confidence(25) + TI(20) + pattern(10) + corr(10)
+    - severity = CRITICAL(>0.75) | HIGH(>0.5) | MEDIUM(>0.25) | LOW
+    - decision = AUTO_REMEDIATE | ESCALATE_L2 | MONITOR
+
+  EXPLAIN:
+    - Calls LLM with full context to generate narrative
+    - Selects response playbook from backend/reasoning/playbooks.py
+    - Builds why_flagged list of human-readable reasons
+           │
+           ▼
+[Response JSON] returned to React
+  {
+    severity, risk_score, confidence, decision,
+    compound_anomaly_score, correlation_depth,
+    pipeline_report: { incident_id, kill_chain_path, mitre_techniques,
+                       threat_intel, rag_snippets, llm_explanation,
+                       recommended_response, attack_graph },
+    reasoning_trace: [ {phase, description, duration_ms}, ... ],
+    iocs_extracted: { ipv4: [...], domains: [...], hashes: [...] },
+    response_playbook: { name, sla, immediate: [...], short_term: [...] },
+    correlated_timeline: [ {timestamp, event_type, description}, ... ],
+    why_flagged: [...],
+    campaign_pattern: "Full Kill Chain" | null
+  }
+           │
+           ▼
+[React] status = 'success', renders ReportPanel
+  ├── Report header bar (incident ID, timestamp, severity pill, decision)
+  ├── Metric strip (anomaly, confidence, risk score, events, sessions, correlation)
+  ├── Left column sections (kill chain, MITRE, attack graph, threat intel, RAG, IOCs)
+  ├── Right column sections (findings, recommendations, playbook, timeline, why flagged)
+  ├── CollapsibleTrace accordion (collapsed by default, 6-step reasoning)
+  └── Raw JSON toggle
+```
+
+---
+
+## 📁 Updated Project Structure (v5.0)
+
+```
+LLM_Powered_SOC_ANALYST/
+│
+├── backend/                              ← FastAPI backend (unchanged structure)
+│   ├── main.py
+│   ├── processing/
+│   │   └── event_extractor.py           ← ✏️ UPDATED: _MITRE_RICH_CONTEXT + enriched get_mitre_query()
+│   └── rag/
+│       └── rag_engine.py                ← ✏️ UPDATED: MMR retrieval, k=5, deduplication, better FTS fallback
+│
+├── frontend/                            ← Original vanilla JS frontend (kept for reference)
+│   ├── index.html
+│   ├── app.js
+│   └── style.css
+│
+└── soc-react-frontend/                  ← 🆕 NEW: React + Vite frontend (active)
+    ├── index.html                       ← Entry point with SEO meta tags
+    ├── vite.config.js
+    ├── package.json                     ← Dependencies: react, axios, lucide-react, framer-motion
+    ├── public/
+    │   └── favicon.svg                  ← 🆕 NEW: Custom SOC shield favicon
+    └── src/
+        ├── index.css                    ← 🆕 NEW: Global design system
+        ├── main.jsx                     ← 🆕 NEW: React DOM root
+        ├── App.jsx                      ← 🆕 NEW: Auth gate + router
+        ├── api/socApi.js                ← 🆕 NEW: Axios client + JWT interceptor
+        ├── constants/scenarios.js       ← 🆕 NEW: Scenarios + pipeline step defs
+        ├── context/AuthContext.jsx      ← 🆕 NEW: Auth state + health polling
+        ├── components/Topbar/           ← 🆕 NEW: Navigation bar
+        └── pages/
+            ├── Login/                   ← 🆕 NEW: Auth form
+            ├── Investigate/             ← 🆕 NEW: 3-panel investigation UI
+            │   └── components/
+            │       ├── EmptyState.jsx   ← 🆕 NEW: Idle state
+            │       ├── LoadingState.jsx ← 🆕 NEW: Pipeline progress animation
+            │       └── ReportPanel.jsx  ← 🆕 NEW: Full incident report renderer
+            └── RagTest/                 ← 🆕 NEW: MITRE RAG test page
+```
+
+---
+
+## 🚀 Running v5.0 (Both Frontend + Backend)
+
+```bash
+# Terminal 1 — Backend
+conda activate rag_env   # or your env with PyTorch + FastAPI
+cd LLM_Powered_SOC_ANALYST
+python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
+
+# Terminal 2 — React Frontend
+cd LLM_Powered_SOC_ANALYST/soc-react-frontend
+npm install              # first time only
+npm run dev              # → http://localhost:5173
+```
+
+**Login credentials (demo):**
+```
+analyst   / password123
+admin     / admin123
+soc_team  / team123
+```
+
+---
+
+<div align="center">
+
+[⬆ Back to top](#-llm-powered-soc-analyst)
+
+</div>
