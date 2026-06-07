@@ -1,14 +1,14 @@
 #!/bin/bash
-# Quick Start: Frontend + Backend RAG Integration
-# This script starts both the backend API and prepares the frontend
+# Quick Start: React Frontend + Backend
+# Starts the backend API and optionally the React dev server
 
 set -e
 
 PROJECT_DIR="/Users/akashmacbook/Desktop/LLM_Powered_SOC_ANALYST"
 cd "$PROJECT_DIR"
 
-echo "🚀 LLM-Powered SOC Analyst - Full Stack Start"
-echo "=============================================="
+echo "🚀 LLM-Powered SOC Analyst — Full Stack Start"
+echo "================================================"
 echo ""
 
 # Check if venv exists
@@ -39,12 +39,10 @@ echo ""
 echo "🎯 Starting Backend API"
 echo "======================"
 echo "FastAPI will run on: http://localhost:8000"
-echo "API docs: http://localhost:8000/docs"
-echo ""
-echo "Press Ctrl+C to stop"
+echo "API docs:            http://localhost:8000/docs"
 echo ""
 
-# Start the API server
+# Start the API server in background
 uvicorn backend.main:app --reload --port 8000 &
 API_PID=$!
 
@@ -54,23 +52,47 @@ sleep 2
 echo ""
 echo "✅ Backend API started (PID: $API_PID)"
 echo ""
-echo "🎨 Frontend"
-echo "==========="
-echo "Open browser to view frontend:"
-echo "  → file:///Users/akashmacbook/Desktop/LLM_Powered_SOC_ANALYST/frontend/index.html"
-echo "  → Or: python3 -m http.server 8080 --directory frontend"
+
+# ── React Frontend ──────────────────────────────────────────────────
+REACT_DIR="$PROJECT_DIR/soc-react-frontend"
+
+echo "🎨 React Frontend"
+echo "================="
+
+if [ -d "$REACT_DIR/node_modules" ]; then
+    echo "Starting React dev server (Vite)..."
+    cd "$REACT_DIR"
+    npm run dev &
+    VITE_PID=$!
+    cd "$PROJECT_DIR"
+    echo ""
+    echo "✅ React frontend started (PID: $VITE_PID)"
+    echo "   → Open: http://localhost:5173"
+else
+    echo "⚠️  node_modules not found. Installing dependencies..."
+    cd "$REACT_DIR"
+    npm install
+    npm run dev &
+    VITE_PID=$!
+    cd "$PROJECT_DIR"
+    echo ""
+    echo "✅ React frontend started (PID: $VITE_PID)"
+    echo "   → Open: http://localhost:5173"
+fi
+
 echo ""
-echo "📚 Documentation"
-echo "================"
-echo "Full integration guide: FRONTEND_BACKEND_INTEGRATION.md"
-echo "RAG setup: RAG_INTEGRATION_SUMMARY.md"
+echo "📚 Docs"
+echo "======="
+echo "  Backend API:  http://localhost:8000/docs"
+echo "  React App:    http://localhost:5173"
 echo ""
 echo "✅ System Ready!"
-echo "Process Backend API with:"
-echo "  kill $API_PID"
 echo ""
-echo "Waiting for API to run (Ctrl+C to stop)..."
+echo "To stop everything:"
+echo "  kill $API_PID $VITE_PID"
+echo ""
+echo "Waiting… (Ctrl+C to stop both servers)"
 echo ""
 
-# Wait for API
-wait $API_PID
+# Wait for background jobs
+wait

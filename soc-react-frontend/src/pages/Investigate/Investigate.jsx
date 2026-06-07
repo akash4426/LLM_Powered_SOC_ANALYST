@@ -74,14 +74,16 @@ export default function Investigate() {
   const animatePipeline = useCallback((stepCount) => {
     setPipeStep(0);
     let step = 0;
-    const delay = agentMode ? 3500 : 4000;
+    // Spread steps evenly over an estimated analysis window (ms per step)
+    // agentMode ≈ 40 s total → ~5000 ms/step; standard ≈ 25 s → ~3500 ms/step
+    const msPerStep = agentMode ? 5000 : 3500;
     timerRef.current = setInterval(() => {
       step += 1;
       if (step >= stepCount) { clearInterval(timerRef.current); return; }
       setPipeStep(step);
       const labels = PIPELINE_STEPS.map(s => s.label);
       addFeed('feedCyan', `[${String(step).padStart(2,'0')}] ${labels[step] || ''}…`);
-    }, delay / stepCount * 1000);
+    }, msPerStep);
   }, [agentMode, addFeed]);
 
   /* ── Run investigation ── */

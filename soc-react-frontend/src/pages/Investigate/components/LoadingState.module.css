@@ -1,33 +1,41 @@
 /* src/pages/Investigate/components/LoadingState.module.css */
+
+/* ── Container ── */
 .container {
   flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 40px;
-  gap: 32px;
-  animation: fadeIn 0.3s ease both;
+  padding: 32px 40px;
+  gap: 28px;
+  animation: fadeUp 0.4s ease both;
 }
 
-@keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
 
+/* ── Header ── */
 .header {
   display: flex;
   align-items: center;
   gap: 20px;
 }
 
+/* ── Spinner ── */
 .spinnerBlock {
   position: relative;
-  width: 52px;
-  height: 52px;
+  width: 56px;
+  height: 56px;
+  flex-shrink: 0;
 }
 
 .spinner {
-  width: 52px;
-  height: 52px;
-  border: 2px solid rgba(0,212,255,0.1);
+  position: absolute;
+  inset: 0;
+  border: 2px solid rgba(0,212,255,0.12);
   border-top-color: var(--cyan);
   border-radius: 50%;
   animation: spin 1s linear infinite;
@@ -35,36 +43,125 @@
 
 .spinnerRing {
   position: absolute;
-  inset: 6px;
-  border: 2px solid rgba(68,136,255,0.1);
+  inset: 8px;
+  border: 2px solid rgba(68,136,255,0.12);
   border-bottom-color: var(--blue);
   border-radius: 50%;
-  animation: spin 1.5s linear infinite reverse;
+  animation: spin 1.6s linear infinite reverse;
 }
 
-@keyframes spin { to { transform: rotate(360deg); } }
+.spinnerCore {
+  position: absolute;
+  inset: 18px;
+  background: rgba(0,212,255,0.18);
+  border-radius: 50%;
+  animation: corePulse 2s ease-in-out infinite;
+}
 
+@keyframes spin       { to { transform: rotate(360deg); } }
+@keyframes corePulse  {
+  0%, 100% { opacity: 0.4; transform: scale(0.85); }
+  50%      { opacity: 1;   transform: scale(1.1); }
+}
+
+/* ── Title ── */
 .title {
   font-family: var(--font-mono);
   font-size: 14px;
   font-weight: 700;
   letter-spacing: 0.08em;
   color: var(--cyan);
-  margin-bottom: 4px;
+  margin-bottom: 6px;
 }
 
 .sub {
   font-size: 12px;
   color: var(--text-2);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
-/* Pipeline steps */
+.agentBadge {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 2px 7px;
+  background: rgba(170,102,255,0.14);
+  border: 1px solid rgba(170,102,255,0.35);
+  border-radius: 4px;
+  color: var(--purple);
+}
+
+/* ── Progress bar ── */
+.progressWrap {
+  width: 100%;
+  max-width: 540px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.progressTrack {
+  flex: 1;
+  height: 4px;
+  background: var(--bg-3);
+  border-radius: 2px;
+  overflow: hidden;
+  position: relative;
+}
+
+.progressFill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--cyan), var(--blue));
+  border-radius: 2px;
+  transition: width 0.6s cubic-bezier(0.4,0,0.2,1);
+  position: relative;
+}
+
+.progressFill::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: -1px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--cyan);
+  box-shadow: 0 0 8px var(--cyan);
+}
+
+.progressScan {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent 0%, rgba(0,212,255,0.25) 50%, transparent 100%);
+  width: 40%;
+  animation: scanSlide 1.6s ease-in-out infinite;
+}
+
+@keyframes scanSlide {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(350%); }
+}
+
+.progressPct {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--cyan);
+  min-width: 32px;
+  text-align: right;
+  font-weight: 600;
+}
+
+/* ── Pipeline steps ── */
 .pipeline {
   width: 100%;
-  max-width: 520px;
+  max-width: 540px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
 }
 
 .step {
@@ -75,35 +172,74 @@
   border-radius: var(--radius-md);
   border: 1px solid var(--border-0);
   background: var(--bg-1);
-  transition: all 0.3s ease;
-  animation: slideIn 0.3s ease both;
+  transition: border-color 0.3s ease, background 0.3s ease, opacity 0.3s ease;
+  position: relative;
+  overflow: hidden;
+  animation: stepAppear 0.3s ease both;
 }
 
-@keyframes slideIn {
-  from { opacity: 0; transform: translateX(-12px); }
-  to { opacity: 1; transform: translateX(0); }
+@keyframes stepAppear {
+  from { opacity: 0; transform: translateX(-10px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+/* States */
+.step.pending {
+  opacity: 0.45;
 }
 
 .step.active {
-  border-color: rgba(0,212,255,0.3);
-  background: rgba(0,212,255,0.05);
+  border-color: rgba(0,212,255,0.4);
+  background: rgba(0,212,255,0.06);
+  opacity: 1;
+  box-shadow: 0 0 12px rgba(0,212,255,0.08);
 }
 
 .step.done {
-  border-color: rgba(0,230,118,0.2);
-  background: rgba(0,230,118,0.03);
+  border-color: rgba(0,230,118,0.25);
+  background: rgba(0,230,118,0.04);
+  opacity: 0.8;
 }
 
-.stepNum {
+/* ── Step icon column ── */
+.stepIcon {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.iconDone {
   font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-3);
-  min-width: 22px;
+  font-size: 13px;
+  color: var(--green);
+  font-weight: 700;
 }
 
-.step.active .stepNum { color: var(--cyan); }
-.step.done .stepNum { color: var(--green); }
+.iconPending {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-3);
+}
 
+.iconActive {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--cyan);
+  box-shadow: 0 0 8px var(--cyan), 0 0 16px rgba(0,212,255,0.4);
+  animation: activePulse 1s ease-in-out infinite;
+  display: inline-block;
+}
+
+@keyframes activePulse {
+  0%, 100% { opacity: 1;   transform: scale(1);    box-shadow: 0 0 6px var(--cyan), 0 0 12px rgba(0,212,255,0.4); }
+  50%      { opacity: 0.5; transform: scale(0.75); box-shadow: none; }
+}
+
+/* ── Step info ── */
 .stepInfo { flex: 1; }
 
 .stepLabel {
@@ -111,43 +247,35 @@
   font-weight: 500;
   color: var(--text-1);
   margin-bottom: 2px;
+  transition: color 0.2s ease;
 }
 
-.step.active .stepLabel { color: var(--text-0); }
-.step.done .stepLabel { color: var(--text-2); }
+.step.active .stepLabel { color: var(--text-0); font-weight: 600; }
+.step.done  .stepLabel  { color: var(--text-2); }
 
 .stepDesc {
-  font-size: 10px;
-  color: var(--text-3);
   font-family: var(--font-mono);
-}
-
-.stepStatus {
-  font-family: var(--font-mono);
-  font-size: 14px;
+  font-size: 9px;
   color: var(--text-3);
-  min-width: 16px;
-  text-align: center;
+  letter-spacing: 0.02em;
 }
 
-.step.active .stepStatus { color: var(--cyan); }
-.step.done .stepStatus { color: var(--green); }
-
-.activeDot {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--cyan);
-  animation: pulse 1s ease infinite;
+/* Animated scan line on active step */
+.scanLine {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent 0%, rgba(0,212,255,0.08) 50%, transparent 100%);
+  width: 60%;
+  animation: stepScan 1.4s ease-in-out infinite;
+  pointer-events: none;
 }
 
-@keyframes pulse {
-  0%, 100% { opacity: 1; box-shadow: 0 0 6px var(--cyan); }
-  50% { opacity: 0.4; box-shadow: none; }
+@keyframes stepScan {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(260%); }
 }
 
-/* Footer */
+/* ── Footer ── */
 .footer {
   display: flex;
   flex-direction: column;
@@ -158,15 +286,17 @@
 .elapsed {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   font-family: var(--font-mono);
   font-size: 11px;
 }
 
 .elapsedLabel { color: var(--text-3); }
-.elapsedVal { color: var(--cyan); font-weight: 600; }
+.elapsedVal   { color: var(--cyan); font-weight: 600; }
+.elapsedSep   { color: var(--text-3); }
 
 .note {
   font-size: 11px;
   color: var(--text-3);
+  text-align: center;
 }
