@@ -58,7 +58,9 @@ export const SCENARIOS = {
   },
 };
 
-export const API_BASE = 'http://localhost:8000';
+// In production (Vercel), set VITE_API_BASE to your deployed backend URL.
+// Locally it falls back to http://localhost:8000
+export const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
 
 export const DEMO_CREDENTIALS = {
   username: 'analyst',
