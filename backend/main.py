@@ -60,16 +60,24 @@ app = FastAPI(
     version="2.0.0",
 )
 
+# Explicit origins required when allow_credentials=True
+# (browsers reject wildcard "*" combined with credentials)
+CORS_ORIGINS = [
+    "https://llm-powered-soc-analyst.vercel.app",  # Vercel production
+    "http://localhost:5173",                         # Vite dev server
+    "http://localhost:3000",                         # alternate dev port
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-# ── Private Network Access (for opening directly from file://) ────────────────
+# ── Private Network Access header (kept for any local file:// fallback) ────────
 @app.middleware("http")
 async def add_private_network_header(request: Request, call_next):
     response = await call_next(request)
