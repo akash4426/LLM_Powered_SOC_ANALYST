@@ -3,19 +3,21 @@ import { useState } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Topbar from './components/Topbar/Topbar';
 import Login from './pages/Login/Login';
+import Dashboard from './pages/Dashboard/Dashboard';
 import Investigate from './pages/Investigate/Investigate';
 import RagTest from './pages/RagTest/RagTest';
+import Evaluate from './pages/Evaluate/Evaluate';
 import styles from './App.module.css';
 
 function AppShell() {
   const { token, loading } = useAuth();
-  const [page, setPage] = useState('investigate');
+  const [page, setPage] = useState('dashboard');
 
   if (loading) {
     return (
       <div className={styles.splash}>
         <div className={styles.splashSpinner} />
-        <div className={styles.splashText}>INITIALIZING SOC ANALYST…</div>
+        <div className={styles.splashText}>INITIALIZING SOC ANALYST v5.0…</div>
       </div>
     );
   }
@@ -24,9 +26,11 @@ function AppShell() {
 
   const renderPage = () => {
     switch (page) {
+      case 'dashboard':   return <Dashboard onNavigate={setPage} />;
       case 'investigate': return <Investigate />;
       case 'ragtest':     return <RagTest />;
-      default:            return <Investigate />;
+      case 'evaluate':    return <Evaluate />;
+      default:            return <Dashboard onNavigate={setPage} />;
     }
   };
 

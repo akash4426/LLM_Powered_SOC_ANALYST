@@ -215,10 +215,10 @@ export default function Investigate() {
             {[
               ['NORMALIZE', 'Regex + JSON parser'],
               ['CLASSIFY', 'Rule engine (10 types)'],
-              ['LSTM', 'Sequence autoencoder'],
+              ['LSTM', 'PyTorch Sequence Autoencoder'],
               ['THREAT INTEL', 'IP / hash / command DB'],
               ['RAG', 'ChromaDB + MITRE ATT&CK'],
-              ['LLM', 'OpenAI (OpenRouter)'],
+              ['LLM', 'GPT-OSS 120B (OpenRouter)'],
               ['GRAPH', 'NetworkX kill-chain'],
               ['AGENT', 'Cross-session correlator'],
             ].map(([k, v]) => (

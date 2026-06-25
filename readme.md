@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🛡️ LLM-Powered SOC Analyst
+# 🛡️ LLM-Powered SOC Analyst — v5.0
 
 <br>
 
@@ -19,6 +19,7 @@ ReAct-style multi-tool reasoning, LSTM anomaly detection, MITRE ATT&CK RAG retri
 <br>
 
 [![Status](https://img.shields.io/badge/Status-Production_Ready-00C853?style=flat-square)](#)
+[![Version](https://img.shields.io/badge/Version-5.0-00D4FF?style=flat-square)](#)
 [![License](https://img.shields.io/badge/License-MIT-FFC107?style=flat-square)](#-license)
 [![GitHub Stars](https://img.shields.io/github/stars/akash4426/LLM_Powered_SOC_ANALYST?style=flat-square&logo=github)](https://github.com/akash4426/LLM_Powered_SOC_ANALYST)
 
@@ -46,6 +47,20 @@ ReAct-style multi-tool reasoning, LSTM anomaly detection, MITRE ATT&CK RAG retri
 
 ---
 
+## 🆕 What's New in v5.0
+
+| Feature | Description |
+|---------|-------------|
+| **Dashboard Page** | Live system stats, multi-agent architecture diagram, evaluation ring charts |
+| **Evaluate Page** | Precision/Recall/F1 ring charts, confusion matrix, 10-sample labeled test suite |
+| **PDF Export** | One-click incident report export to print-quality PDF |
+| **Agent Decision Banner** | Prominent visual banner showing autonomous agent decision with risk score |
+| **6 Attack Scenarios** | Added APT C2 lateral movement + insider threat scenarios (was 4) |
+| **`/dashboard/stats` API** | New endpoint returning component health, agent registry, and entity counts |
+| **v5.0 Topbar** | Full 4-page navigation: DASHBOARD · INVESTIGATE · RAG TEST · EVALUATE |
+
+---
+
 ## 🚀 Quick Start
 
 ### Prerequisites
@@ -56,33 +71,36 @@ ReAct-style multi-tool reasoning, LSTM anomaly detection, MITRE ATT&CK RAG retri
 ### Installation (Local)
 
 ```bash
-# Clone repository
+# 1. Clone repository
 git clone https://github.com/akash4426/LLM_Powered_SOC_ANALYST.git
 cd LLM_Powered_SOC_ANALYST
 
-# Create virtual environment
+# 2. Setup Backend
 python -m venv .venv
-source .venv/bin/activate  # macOS/Linux
-# or: .venv\Scripts\activate  # Windows
-
-# Install dependencies
+source .venv/bin/activate  # macOS/Linux (or .venv\Scripts\activate for Windows)
 pip install -r requirements.txt
-
-# Download LSTM model
 python scripts/download_models.py
 
-# Set up environment
+# 3. Set up environment
 cp .env.example .env
-# Edit .env with your OpenAI API key
+# Edit .env with your OpenRouter API key (OPEN_ROUTER_API)
 
-# Initialize RAG database (MITRE ATT&CK)
+# 4. Initialize RAG database (MITRE ATT&CK)
 python backend/rag/build_mitre_db.py
 
-# Start the API server
+# 5. Start the FastAPI server
 python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
+```
 
-# Open frontend in browser
-# http://localhost:8000/frontend/index.html
+Open a **second terminal** for the frontend:
+
+```bash
+# 6. Start the React Frontend
+cd LLM_Powered_SOC_ANALYST/soc-react-frontend
+npm install
+npm run dev
+
+# Open http://localhost:5173 in your browser
 ```
 
 ### Docker Deployment
@@ -91,8 +109,8 @@ python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
 # Build and run with Docker Compose
 docker-compose up -d
 
-# API runs on http://localhost:8000
-# Frontend: http://localhost:8000/frontend/index.html
+# Backend API runs on http://localhost:8000
+# React Frontend runs on http://localhost:5173
 ```
 
 ---
@@ -1215,45 +1233,78 @@ USER clicks "RUN INVESTIGATION"
 
 ---
 
-## 📁 Updated Project Structure (v5.0)
+## 💻 Professional React Frontend (v5.0)
+
+Version 5.0 introduces a **production-ready, highly interactive React SPA (Single Page Application)** built with Vite, React Router, and a stunning Glassmorphism design system. 
+
+It consists of four main application pillars:
+
+### 1. 📊 SOC Analyst Dashboard (`/dashboard`)
+- **Live System Metrics:** Fetches health status of the LSTM model, ChromaDB vector store, and LLM API.
+- **Visual Analytics:** Displays ring charts powered by Recharts (Pipeline Stages, Agent Tools, Attack Patterns, Entities Tracked).
+- **Interactive Multi-Agent Architecture Diagram:** A dynamic flow diagram showcasing how the Observe → Think → Act → Synthesize → Decide → Explain loop operates.
+
+### 2. 🔍 Investigation Hub (`/investigate`)
+- **3-Panel Layout:** Seamlessly integrates log input, real-time agent processing animations, and the final incident report.
+- **6 Pre-loaded Threat Scenarios:** Including APT Lateral Movement, Insider Threats, Brute Force, and Data Exfiltration.
+- **Agent Decision Banner:** A prominent color-coded banner immediately surfacing the autonomous agent's final decision (`AUTO_REMEDIATE`, `ESCALATE_L2`, `MONITOR`).
+- **PDF Export:** Uses `html2pdf.js` to allow security analysts to instantly generate professional, print-ready incident reports.
+
+### 3. ⚖️ Evaluation & Metrics (`/evaluate`)
+- **Model Performance:** Visualizes the agent's accuracy across a 10-sample labeled dataset (Precision, Recall, F1 Score, Accuracy, Specificity, FPR).
+- **Confusion Matrix Data:** Displays True Positives (TP), True Negatives (TN), False Positives (FP), and False Negatives (FN).
+- **Heuristic Baseline vs LLM Enrichment:** Proves the added value of the LLM and RAG layer over standard LSTM detection.
+
+### 4. 🧠 RAG Knowledge Test (`/rag-test`)
+- **Direct ChromaDB Interface:** Allows analysts to directly query the MITRE ATT&CK vector database.
+- **Semantic Search Visualization:** Returns top-K snippets with similarity scores to explain *why* the agent chose specific MITRE techniques.
+
+---
+
+## 📁 Complete Project Structure (v5.0)
 
 ```
 LLM_Powered_SOC_ANALYST/
 │
-├── backend/                              ← FastAPI backend (unchanged structure)
-│   ├── main.py
+├── backend/                              ← FastAPI backend
+│   ├── main.py                           ← Entry point, API routes (/dashboard/stats, /evaluate)
+│   ├── incident_report.py                ← Report schema and graph generation
+│   ├── models/
+│   │   └── lstm_model.py                 ← PyTorch sequence autoencoder
 │   ├── processing/
-│   │   └── event_extractor.py           ← ✏️ UPDATED: _MITRE_RICH_CONTEXT + enriched get_mitre_query()
-│   └── rag/
-│       └── rag_engine.py                ← ✏️ UPDATED: MMR retrieval, k=5, deduplication, better FTS fallback
+│   │   ├── event_extractor.py            ← Rule engine (10 types) + RAG query builder
+│   │   └── threat_intel.py               ← IP/hash reputation simulation
+│   ├── rag/
+│   │   ├── build_mitre_db.py             ← Ingests MITRE JSON to ChromaDB
+│   │   └── rag_engine.py                 ← MMR retrieval + SQLite fallback
+│   └── reasoning/
+│       ├── agent_layer.py                ← Core ReAct engine (Observe/Think/Act)
+│       ├── agent_tools.py                ← 6 specialized reasoning tools
+│       ├── llm_agent.py                  ← OpenRouter/LLM interaction + JSON parsing
+│       └── playbooks.py                  ← Severity-adaptive response playbooks
 │
-├── frontend/                            ← Original vanilla JS frontend (kept for reference)
-│   ├── index.html
-│   ├── app.js
-│   └── style.css
+├── frontend/                             ← Original Vanilla JS frontend (kept for reference)
 │
-└── soc-react-frontend/                  ← 🆕 NEW: React + Vite frontend (active)
-    ├── index.html                       ← Entry point with SEO meta tags
-    ├── vite.config.js
-    ├── package.json                     ← Dependencies: react, axios, lucide-react, framer-motion
-    ├── public/
-    │   └── favicon.svg                  ← 🆕 NEW: Custom SOC shield favicon
+└── soc-react-frontend/                   ← 🆕 NEW: React + Vite frontend
+    ├── index.html                        ← Entry point with SEO meta tags
+    ├── vite.config.js                    ← Vite build configuration
+    ├── package.json                      
     └── src/
-        ├── index.css                    ← 🆕 NEW: Global design system
-        ├── main.jsx                     ← 🆕 NEW: React DOM root
-        ├── App.jsx                      ← 🆕 NEW: Auth gate + router
-        ├── api/socApi.js                ← 🆕 NEW: Axios client + JWT interceptor
-        ├── constants/scenarios.js       ← 🆕 NEW: Scenarios + pipeline step defs
-        ├── context/AuthContext.jsx      ← 🆕 NEW: Auth state + health polling
-        ├── components/Topbar/           ← 🆕 NEW: Navigation bar
+        ├── index.css                     ← Global Glassmorphism design system
+        ├── App.jsx                       ← React Router + Auth Gate
+        ├── api/socApi.js                 ← Axios client with JWT interceptor
+        ├── context/AuthContext.jsx       ← Global authentication state
+        ├── components/
+        │   └── Topbar/                   ← Global 4-tab navigation bar
         └── pages/
-            ├── Login/                   ← 🆕 NEW: Auth form
-            ├── Investigate/             ← 🆕 NEW: 3-panel investigation UI
+            ├── Login/                    ← Demo credentials + versioning
+            ├── Dashboard/                ← Recharts visualization + System Health
+            ├── Investigate/              ← Core incident investigation UI
             │   └── components/
-            │       ├── EmptyState.jsx   ← 🆕 NEW: Idle state
-            │       ├── LoadingState.jsx ← 🆕 NEW: Pipeline progress animation
-            │       └── ReportPanel.jsx  ← 🆕 NEW: Full incident report renderer
-            └── RagTest/                 ← 🆕 NEW: MITRE RAG test page
+            │       ├── ReportPanel.jsx   ← Full incident report renderer + PDF Export
+            │       └── LoadingState.jsx  ← Animated pipeline status
+            ├── RagTest/                  ← Vector DB semantic search UI
+            └── Evaluate/                 ← LLM evaluation metrics & Test Suite
 ```
 
 ---

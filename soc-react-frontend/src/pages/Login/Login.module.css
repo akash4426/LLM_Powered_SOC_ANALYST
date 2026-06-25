@@ -8,6 +8,7 @@
   position: relative;
   overflow: hidden;
   background: var(--bg-0);
+  gap: 60px;
 }
 
 /* Background grid */
@@ -260,9 +261,83 @@
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-2);
-  padding: 3px 0;
+  padding: 4px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s;
 }
+.demoRow:hover { background: var(--bg-2); color: var(--text-1); }
 
 .demoRow span:last-child {
   color: var(--text-3);
 }
+
+/* ── Feature Panel (left side on login) ── */
+.featurePanel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 340px;
+  flex-shrink: 0;
+  animation: fadeIn 0.4s ease 0.1s both;
+}
+.fpLogo {
+  position: relative;
+  width: 70px;
+  height: 70px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.fpOrbRing {
+  position: absolute;
+  top: -10px; left: -10px;
+  right: -10px; bottom: -10px;
+  border-radius: 50%;
+  border: 1px solid rgba(0,212,255,0.2);
+  animation: spin 12s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.fpTitle {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text-0);
+}
+.fpSub { font-size: 13px; color: var(--text-2); line-height: 1.6; }
+.fpFeatures { display: flex; flex-direction: column; gap: 12px; }
+.fpFeature { display: flex; align-items: center; gap: 12px; }
+.fpFeatureIcon {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.fpFeatureLabel {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-1);
+}
+.fpStats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  padding-top: 4px;
+}
+.fpStat { text-align: center; }
+.fpStatVal {
+  font-family: var(--font-mono);
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--cyan);
+  margin-bottom: 2px;
+}
+.fpStatLabel { font-size: 9px; color: var(--text-3); letter-spacing: 0.06em; text-transform: uppercase; }
+
+@media (max-width: 800px) {
+  .featurePanel { display: none; }
+}
+

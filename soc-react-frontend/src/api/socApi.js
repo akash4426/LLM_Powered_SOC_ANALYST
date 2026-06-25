@@ -21,6 +21,11 @@ export const checkHealth = async () => {
   return res.data;
 };
 
+export const getDashboardStats = async () => {
+  const res = await client.get('/dashboard/stats');
+  return res.data;
+};
+
 export const investigate = async (logs) => {
   const res = await client.post('/investigate', { logs });
   return res.data;

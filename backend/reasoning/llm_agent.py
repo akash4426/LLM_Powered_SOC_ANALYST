@@ -18,7 +18,7 @@ import re
 from typing import Optional, Dict, Any, List, Tuple
 
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(override=True)
 
 from backend.rag.rag_engine import retrieve_context
 from backend.utils.json_parser import parse_and_validate_incident_report
@@ -26,11 +26,11 @@ from backend.utils.json_parser import parse_and_validate_incident_report
 logger = logging.getLogger(__name__)
 
 # --- Configuration (loaded from .env) ---
-MODEL_NAME = os.getenv("OPENROUTER_MODEL", "openai/gpt-4o-mini")
+MODEL_NAME = os.getenv("OPENROUTER_MODEL", "openai/gpt-oss-120b:free")
 
 # MITRE ATT&CK Technique regex (T-code validation)
 MITRE_TCODE_PATTERN = re.compile(r'T\d{4}(?:\.\d{3})?')
-
+    
 # ── Validation Functions ──────────────────────────────────────────────────────
 
 def validate_mitre_techniques(techniques: List[str], rag_context: str, event_sequence: List[str]) -> List[str]:
@@ -333,6 +333,19 @@ def generate_inference(prompt: str) -> str:
             max_tokens=600,
             temperature=0.3
         )
+        
+        # Handle cases where response might be a dictionary or missing choices
+        if isinstance(response, dict):
+            if "error" in response:
+                raise RuntimeError(f"API Error: {response['error']}")
+            choices = response.get("choices")
+            if not choices:
+                raise RuntimeError(f"No choices in response: {response}")
+            return choices[0]["message"]["content"].strip()
+            
+        if not getattr(response, "choices", None):
+            raise RuntimeError(f"No choices in response: {response}")
+            
         return response.choices[0].message.content.strip()
     except Exception as e:
         logger.error(f"OpenRouter API failed: {e}")
@@ -456,7 +469,17 @@ def investigate_logs(
 
     # 4. Parse JSON output
     try:
-        llm_dict = json.loads(llm_output) if llm_output else {}
+        if llm_output:
+            # Extract JSON block if surrounded by markdown or conversational text
+            start = llm_output.find('{')
+            end = llm_output.rfind('}')
+            if start != -1 and end != -1 and end >= start:
+                llm_output_clean = llm_output[start:end+1]
+            else:
+                llm_output_clean = llm_output
+            llm_dict = json.loads(llm_output_clean)
+        else:
+            llm_dict = {}
     except json.JSONDecodeError:
         logger.warning(f"Failed to parse LLM JSON: {llm_output[:100]}")
         llm_dict = {}

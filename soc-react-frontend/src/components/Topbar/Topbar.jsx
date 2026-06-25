@@ -1,8 +1,15 @@
 // src/components/Topbar/Topbar.jsx
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { Shield, Zap } from 'lucide-react';
+import { Shield, Zap, LayoutDashboard, Search, Database, BarChart2, LogOut } from 'lucide-react';
 import styles from './Topbar.module.css';
+
+const NAV_ITEMS = [
+  { id: 'dashboard',   label: 'DASHBOARD',   icon: LayoutDashboard },
+  { id: 'investigate', label: 'INVESTIGATE',  icon: Search },
+  { id: 'ragtest',     label: 'RAG TEST',     icon: Database },
+  { id: 'evaluate',   label: 'EVALUATE',     icon: BarChart2 },
+];
 
 export default function Topbar({ currentPage, onNavigate }) {
   const { apiOnline, user, logout } = useAuth();
@@ -28,8 +35,21 @@ export default function Topbar({ currentPage, onNavigate }) {
           <span className={styles.logoText}>SOC_ANALYST</span>
         </div>
         <span className={styles.sep}>|</span>
-        <span className={styles.version}>v4.0 · LSTM+RAG+LLM+Agent</span>
+        <span className={styles.version}>v5.0 · LSTM+RAG+LLM+ReAct</span>
       </div>
+
+      <nav className={styles.nav}>
+        {NAV_ITEMS.map(({ id, label, icon: Icon }) => (
+          <button
+            key={id}
+            className={`${styles.navBtn} ${currentPage === id ? styles.active : ''}`}
+            onClick={() => onNavigate(id)}
+          >
+            <Icon size={11} />
+            {label}
+          </button>
+        ))}
+      </nav>
 
       <div className={styles.right}>
         {/* API Status */}
@@ -38,25 +58,16 @@ export default function Topbar({ currentPage, onNavigate }) {
           {apiOnline ? 'API ONLINE' : 'API OFFLINE'}
         </div>
 
-        {/* Nav */}
-        <button
-          className={`${styles.navBtn} ${currentPage === 'investigate' ? styles.active : ''}`}
-          onClick={() => onNavigate('investigate')}
-        >INVESTIGATE</button>
-
-        <button
-          className={`${styles.navBtn} ${currentPage === 'ragtest' ? styles.active : ''}`}
-          onClick={() => onNavigate('ragtest')}
-        >RAG TEST</button>
-
-
         {/* User chip */}
         {user && (
-          <div className={styles.userChip} onClick={logout} title="Click to logout">
+          <div className={styles.userChip}>
             <div className={styles.userAvatar}>
               {user.username?.charAt(0).toUpperCase()}
             </div>
-            {user.username}
+            <span>{user.username}</span>
+            <button className={styles.logoutBtn} onClick={logout} title="Logout">
+              <LogOut size={10} />
+            </button>
           </div>
         )}
 
