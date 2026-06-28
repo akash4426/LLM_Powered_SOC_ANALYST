@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🛡️ LLM-Powered SOC Analyst — v5.0
+# 🛡️ LLM-Powered SOC Analyst — v6.0
 
 <br>
 
@@ -19,7 +19,7 @@ ReAct-style multi-tool reasoning, LSTM anomaly detection, MITRE ATT&CK RAG retri
 <br>
 
 [![Status](https://img.shields.io/badge/Status-Production_Ready-00C853?style=flat-square)](#)
-[![Version](https://img.shields.io/badge/Version-5.0-00D4FF?style=flat-square)](#)
+[![Version](https://img.shields.io/badge/Version-6.0-00D4FF?style=flat-square)](#)
 [![License](https://img.shields.io/badge/License-MIT-FFC107?style=flat-square)](#-license)
 [![GitHub Stars](https://img.shields.io/github/stars/akash4426/LLM_Powered_SOC_ANALYST?style=flat-square&logo=github)](https://github.com/akash4426/LLM_Powered_SOC_ANALYST)
 
@@ -39,7 +39,7 @@ ReAct-style multi-tool reasoning, LSTM anomaly detection, MITRE ATT&CK RAG retri
 | [✨ Features](#-key-features) | Core capabilities and innovations |
 | [🏗️ Architecture](#%EF%B8%8F-system-architecture) | System design and component overview |
 | [🔄 Pipeline](#-investigation-pipeline) | Step-by-step analysis flow |
-| [🤖 Agent Layer](#-agentic-ai-layer-v40) | ReAct reasoning engine deep-dive |
+| [🤖 Agent Layer](#-agentic-ai-layer-v60) | ReAct reasoning engine deep-dive |
 | [📡 API Reference](#-api-reference) | Endpoint documentation |
 | [🎮 Frontend](#-frontend) | Web UI for investigations |
 | [🛠️ Tech Stack](#%EF%B8%8F-tech-stack) | Technologies used |
@@ -47,17 +47,39 @@ ReAct-style multi-tool reasoning, LSTM anomaly detection, MITRE ATT&CK RAG retri
 
 ---
 
-## 🆕 What's New in v5.0
+## 🆕 What's New in v6.0 (True Agent Orchestrator)
 
-| Feature | Description |
-|---------|-------------|
-| **Dashboard Page** | Live system stats, multi-agent architecture diagram, evaluation ring charts |
-| **Evaluate Page** | Precision/Recall/F1 ring charts, confusion matrix, 10-sample labeled test suite |
-| **PDF Export** | One-click incident report export to print-quality PDF |
-| **Agent Decision Banner** | Prominent visual banner showing autonomous agent decision with risk score |
-| **6 Attack Scenarios** | Added APT C2 lateral movement + insider threat scenarios (was 4) |
-| **`/dashboard/stats` API** | New endpoint returning component health, agent registry, and entity counts |
-| **v5.0 Topbar** | Full 4-page navigation: DASHBOARD · INVESTIGATE · RAG TEST · EVALUATE |
+The core reasoning engine has been entirely refactored from a linear pipeline into a **true 8-phase agent orchestrator** with dynamic tool selection. 
+
+### Before (v5.0)
+`OBSERVE → THINK → ACT (run all 5 tools) → SYNTHESIZE → DECIDE → EXPLAIN`
+- Every investigation ran all tools regardless of input signals.
+- No mid-investigation adaptation.
+
+### After (v6.0)
+`OBSERVE → THINK → PLAN → EXECUTE → EVALUATE → FUSE → DECIDE → EXPLAIN`
+- **THINK** computes a suspicion level (LOW/MEDIUM/HIGH/CRITICAL) from raw signals *before* any tool runs.
+- **PLAN** dynamically selects 2-5 tools based on suspicion (e.g. Benign logs skip expensive tools like RAG).
+- **EXECUTE** runs only planned tools.
+- **EVALUATE** checks if evidence warrants escalation — can add more tools mid-investigation.
+- LLM is only called in **EXPLAIN** to narrate the agent's decision.
+
+### Dynamic Tool Selection
+
+| Suspicion Level | Tools Selected | Skipped |
+|-----------------|---------------|---------|
+| **LOW** | anomaly_score, pattern_match | rag_lookup, threat_intel, ioc_extractor |
+| **MEDIUM** | + threat_intel, ioc_extractor | rag_lookup |
+| **HIGH** | All 5 tools | none |
+| **CRITICAL** | All 5 tools + compound RAG | none |
+
+### Mid-Investigation Escalation (EVALUATE Phase)
+The Agent can now adapt dynamically during the investigation:
+- Pattern detected but RAG wasn't run → **escalates to RAG**
+- Anomaly ≥ 0.3 but RAG wasn't run → **escalates to RAG**
+- Threat intel found malicious but IOC wasn't run → **escalates to IOC**
+
+*(Note: The React Frontend was previously upgraded in v5.0 with live dashboard stats, evaluation rings, and PDF export functionality).*
 
 ---
 
@@ -141,31 +163,33 @@ RAW LOGS
 STRUCTURED INCIDENT REPORT + RESPONSE PLAYBOOK
 ```
 
-### 🤖 Agentic AI Layer (v4.0) — ReAct Reasoning Engine
+### 🤖 Agentic AI Layer (v6.0) — True ReAct Orchestrator
 
-The agent operates via a **6-step autonomous reasoning loop** inspired by the [ReAct paradigm](https://arxiv.org/abs/2210.03629):
+The agent operates via an **8-phase autonomous reasoning loop** inspired by the [ReAct paradigm](https://arxiv.org/abs/2210.03629), featuring **dynamic tool selection** based on suspicion levels:
 
-| Step | Phase | Description |
-|------|-------|-------------|
-| 1 | **OBSERVE** | Collect events, identify entity, build session context |
-| 2 | **THINK** | Evaluate suspicious signals, select analysis strategy |
-| 3 | **ACT** | Execute 5 specialized tools in parallel |
-| 4 | **SYNTHESIZE** | Merge tool outputs, run cross-session correlation, build hypotheses |
-| 5 | **DECIDE** | Compute confidence, severity, risk score, and autonomous decision |
-| 6 | **EXPLAIN** | Generate LLM narrative + select response playbook |
+| Phase | Description |
+|-------|-------------|
+| **1. OBSERVE** | Collect events, identify entity, build session context |
+| **2. THINK** | Evaluate suspicious signals to determine a baseline suspicion level (LOW/MED/HIGH/CRIT) |
+| **3. PLAN** | Dynamically select 2–5 analysis tools based on the suspicion level |
+| **4. EXECUTE** | Run only the planned tools to gather structured evidence |
+| **5. EVALUATE** | Assess intermediate evidence — can escalate and add tools mid-investigation (e.g., if a pattern is found, escalate to RAG) |
+| **6. FUSE** | Merge tool outputs, run cross-session correlation, build attack hypotheses |
+| **7. DECIDE** | Compute deterministic confidence, severity, and risk scores to make an action decision |
+| **8. EXPLAIN** | Generate an LLM narrative and select a response playbook |
 
 **6 Modular Investigation Tools:**
 
-| Tool | Function | Confidence Weight |
+| Tool | Function | Dynamic Execution |
 |------|----------|-------------------|
-| `anomaly_score` | LSTM behavioral anomaly scoring | 35% |
-| `rag_lookup` | MITRE ATT&CK semantic retrieval | 20% |
-| `threat_intel` | IP/hash/command reputation enrichment | 10% |
-| `pattern_match` | Heuristic pattern detection (8 attack types) | 10% |
-| `ioc_extractor` | Automated IOC extraction from raw logs | 10% |
-| `playbook` | Severity-adaptive response playbook generation | — |
+| `anomaly_score` | LSTM behavioral anomaly scoring | Always Run |
+| `pattern_match` | Heuristic pattern detection (8 attack types) | Always Run |
+| `threat_intel` | IP/hash/command reputation enrichment | Medium+ Suspicion |
+| `ioc_extractor` | Automated IOC extraction from raw logs | Medium+ Suspicion |
+| `rag_lookup` | MITRE ATT&CK semantic retrieval | High+ Suspicion or Escalation |
+| `playbook` | Severity-adaptive response playbook generation | Always Run (at the end) |
 
-**Full Explainability:** Every investigation produces a `reasoning_trace` — a step-by-step log of tool invocations, execution times, and intermediate decisions.
+**Full Explainability:** Every investigation produces a `reasoning_trace` — a step-by-step log of the 8 phases, tool invocations, execution times, and intermediate decisions.
 
 ### 🔎 8 Heuristic Attack Patterns
 
@@ -329,32 +353,33 @@ DEFENSE_EVASION, EXFILTRATION
 
 ---
 
-## 🤖 Agentic AI Layer (v4.0)
+## 🤖 Agentic AI Layer (v6.0)
 
-### ReAct Reasoning Loop
+### 8-Phase ReAct Orchestrator
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                                                             │
-│   ┌──────────┐    ┌──────────┐    ┌──────────────────────┐  │
-│   │ OBSERVE  │───►│  THINK   │───►│        ACT           │  │
-│   │          │    │          │    │                      │  │
-│   │ Collect  │    │ Strategy │    │ anomaly_score        │  │
-│   │ events   │    │ selection│    │ pattern_match        │  │
-│   └──────────┘    └──────────┘    │ rag_lookup           │  │
-│                                   │ threat_intel         │  │
-│   ┌──────────┐    ┌──────────┐    │ ioc_extractor        │  │
-│   │ EXPLAIN  │◄───│  DECIDE  │◄───└──────────┬───────────┘  │
-│   │          │    │          │               │              │
-│   │ LLM      │    │ Risk     │    ┌──────────▼───────────┐  │
-│   │ narrative │    │ scoring  │◄───│    SYNTHESIZE        │  │
-│   │ playbook │    │ decision │    │                      │  │
-│   └──────────┘    └──────────┘    │ Merge tool outputs   │  │
-│                                   │ Cross-session corr.  │  │
-│                                   │ Hypothesis building  │  │
-│                                   └──────────────────────┘  │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────┐
+│                                                                        │
+│   ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐         │
+│   │ OBSERVE  │───►│  THINK   │───►│   PLAN   │───►│ EXECUTE  │         │
+│   │          │    │          │    │          │    │          │         │
+│   │ Collect  │    │ Assess   │    │ Select   │    │ Run only │         │
+│   │ events & │    │ suspicion│    │ tools    │    │ planned  │         │
+│   │ memory   │    │ level    │    │ based on │    │ tools    │         │
+│   │          │    │          │    │ suspicion│    │          │         │
+│   └──────────┘    └──────────┘    └──────────┘    └────────┬─┘         │
+│                                                            │           │
+│   ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌────────▼─┐         │
+│   │ EXPLAIN  │◄───│  DECIDE  │◄───│   FUSE   │◄───│ EVALUATE │         │
+│   │          │    │          │    │          │    │          │         │
+│   │ LLM      │    │ Determin-│    │ Merge    │    │ Assess   │         │
+│   │ narrative│    │ istic    │    │ evidence │    │ evidence │         │
+│   │ playbook │    │ scoring &│    │ & build  │    │ & add    │         │
+│   │          │    │ decision │    │ hypothes-│    │ tools if │         │
+│   │          │    │          │    │ is       │    │ needed   │         │
+│   └──────────┘    └──────────┘    └──────────┘    └──────────┘         │
+│                                                                        │
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Confidence Scoring Formula
