@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { getDashboardStats, evaluate } from '../../api/socApi';
-import { AGENTS, PIPELINE_STEPS } from '../../constants/scenarios';
+import { SPECIALISTS, AGENT_PHASES } from '../../constants/scenarios';
 import {
   Shield, Activity, Cpu, Database, Zap, Target, BarChart2,
   Clock, GitBranch, AlertTriangle, CheckCircle2, Circle,
@@ -53,23 +53,23 @@ function StatCard({ icon: Icon, label, value, sub, color, delay = 0 }) {
   );
 }
 
-/* ── Agent Card ── */
+/* ── Specialist Card ── */
 function AgentCard({ agent, delay = 0 }) {
   return (
     <div className={styles.agentCard} style={{ animationDelay: `${delay}ms` }}>
       <div className={styles.agentHeader}>
         <div className={styles.agentId} style={{ color: agent.color }}>{String(agent.id).padStart(2,'0')}</div>
         <div className={styles.agentPhaseBadge} style={{ background: `${agent.color}18`, color: agent.color, border: `1px solid ${agent.color}35` }}>
-          {agent.phase}
+          SPECIALIST
         </div>
       </div>
       <div className={styles.agentName}>{agent.name}</div>
       <div className={styles.agentRole}>{agent.role}</div>
       <div className={styles.agentWeightRow}>
         <div className={styles.agentWeightTrack}>
-          <div className={styles.agentWeightFill} style={{ width: `${agent.weight}%`, background: `linear-gradient(90deg, ${agent.color}99, ${agent.color})` }} />
+          <div className={styles.agentWeightFill} style={{ width: '80%', background: `linear-gradient(90deg, ${agent.color}99, ${agent.color})` }} />
         </div>
-        <span className={styles.agentWeightPct} style={{ color: agent.color }}>{agent.weight}%</span>
+        <span className={styles.agentWeightPct} style={{ color: agent.color }}>ON-DEMAND</span>
       </div>
     </div>
   );
@@ -93,12 +93,14 @@ function PipelineRow({ step, i, active }) {
 /* ── ReAct Flow Diagram ── */
 function ReActFlow() {
   const phases = [
-    { id: 'observe',    label: 'OBSERVE',    color: 'var(--blue)',   desc: 'Collect events & entity context' },
-    { id: 'think',      label: 'THINK',      color: 'var(--purple)', desc: 'Strategy selection' },
-    { id: 'act',        label: 'ACT',        color: 'var(--orange)', desc: 'Execute 5 tools in parallel' },
-    { id: 'synthesize', label: 'SYNTHESIZE', color: 'var(--cyan)',   desc: 'Merge evidence' },
-    { id: 'decide',     label: 'DECIDE',     color: 'var(--red)',    desc: 'Severity & decision' },
-    { id: 'explain',    label: 'EXPLAIN',    color: 'var(--green)',  desc: 'LLM narrative + playbook' },
+    { id: 'observe',   label: 'OBSERVE',   color: 'var(--blue)',   desc: 'Collect facts' },
+    { id: 'think',     label: 'THINK',     color: 'var(--purple)', desc: 'Suspicion assessment' },
+    { id: 'plan',      label: 'PLAN',      color: 'var(--orange)', desc: 'Dynamic tool selection' },
+    { id: 'execute',   label: 'EXECUTE',   color: 'var(--cyan)',   desc: 'Run specialists' },
+    { id: 'evaluate',  label: 'EVALUATE',  color: 'var(--yellow)', desc: 'Assess & escalate' },
+    { id: 'fuse',      label: 'FUSE',      color: 'var(--green)',  desc: 'Merge memory' },
+    { id: 'decide',    label: 'DECIDE',    color: 'var(--red)',    desc: 'Deterministic verdict' },
+    { id: 'explain',   label: 'EXPLAIN',   color: 'var(--green)',  desc: 'LLM narrative' },
   ];
 
   return (
@@ -181,10 +183,10 @@ export default function Dashboard({ onNavigate }) {
     loadStats();
     loadEval();
     // Animate pipeline steps
-    const iv = setInterval(() => {
-      setActivePipeStep(s => (s + 1) % PIPELINE_STEPS.length);
-    }, 1800);
-    return () => clearInterval(iv);
+    const pipeIv = setInterval(() => {
+      setActivePipeStep(s => (s + 1) % AGENT_PHASES.length);
+    }, 2000);
+    return () => clearInterval(pipeIv);
   }, [loadStats, loadEval]);
 
   const components = stats?.components || {};
@@ -273,11 +275,11 @@ export default function Dashboard({ onNavigate }) {
           <div className={styles.panel}>
             <div className={styles.panelHeader}>
               <Terminal size={13} color="var(--cyan)" />
-              <span>Analysis Pipeline</span>
-              <span className={styles.panelBadge}>10 stages</span>
+              <span>Agent Orchestration Phases</span>
+              <span className={styles.panelBadge}>8 phases</span>
             </div>
             <div className={styles.pipelineList}>
-              {PIPELINE_STEPS.map((step, i) => (
+              {AGENT_PHASES.map((step, i) => (
                 <PipelineRow key={step.id} step={step} i={i} active={i === activePipeStep} />
               ))}
             </div>
@@ -291,8 +293,8 @@ export default function Dashboard({ onNavigate }) {
           <div className={styles.panel}>
             <div className={styles.panelHeader}>
               <Shield size={13} color="var(--cyan)" />
-              <span>Multi-Agent Architecture</span>
-              <span className={styles.panelBadge}>6 agents</span>
+              <span>Agent-Oriented Architecture</span>
+              <span className={styles.panelBadge}>5 specialists</span>
             </div>
 
             {/* ReAct Flow */}
@@ -306,7 +308,7 @@ export default function Dashboard({ onNavigate }) {
             {/* Agent cards */}
             <div className={styles.sectionTitle} style={{ marginTop: 20 }}>Agent Registry</div>
             <div className={styles.agentsGrid}>
-              {AGENTS.map((a, i) => (
+              {SPECIALISTS.map((a, i) => (
                 <AgentCard key={a.id} agent={a} delay={i * 80} />
               ))}
             </div>
@@ -320,9 +322,9 @@ export default function Dashboard({ onNavigate }) {
                 <span className={styles.commArrowLabel}>parallel dispatch</span>
               </div>
               <div className={styles.commGroup}>
-                {AGENTS.slice(0,5).map(a => (
+                {SPECIALISTS.map(a => (
                   <div key={a.id} className={styles.commAgentNode} style={{ borderColor: `${a.color}40`, color: a.color }}>
-                    {a.name.replace('Agent','')}
+                    {a.name}
                   </div>
                 ))}
               </div>
@@ -335,8 +337,8 @@ export default function Dashboard({ onNavigate }) {
                 <ArrowRight size={14} color="var(--text-3)" />
                 <span className={styles.commArrowLabel}>decide + explain</span>
               </div>
-              <div className={styles.commNode} style={{ borderColor: `${AGENTS[5].color}30`, color: AGENTS[5].color }}>
-                {AGENTS[5].name.replace('Agent','')}
+              <div className={styles.commNode} style={{ borderColor: `rgba(170, 102, 255, 0.3)`, color: '#aa66ff' }}>
+                Orchestrator
               </div>
             </div>
           </div>

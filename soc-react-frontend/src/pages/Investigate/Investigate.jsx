@@ -1,12 +1,12 @@
 // src/pages/Investigate/Investigate.jsx
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { investigate, investigateAgent } from '../../api/socApi';
-import { SCENARIOS, PIPELINE_STEPS } from '../../constants/scenarios';
-import { Upload, Trash2, Play, Bot, Info } from 'lucide-react';
+import { SCENARIOS, AGENT_PHASES } from '../../constants/scenarios';
+import { Upload, Trash2, Play, Info } from 'lucide-react';
 
 import styles from './Investigate.module.css';
-import PipelineProgress from './components/PipelineProgress';
-import ReportPanel from './components/ReportPanel';
+import AgentPhaseTracker from './components/AgentPhaseTracker';
+import InvestigationConsole from './components/InvestigationConsole';
 import EmptyState from './components/EmptyState';
 import LoadingState from './components/LoadingState';
 
@@ -16,7 +16,6 @@ const MAX_FEED = 60;
 export default function Investigate() {
   const [logs, setLogs] = useState('');
   const [filename, setFilename] = useState('');
-  const [agentMode, setAgentMode] = useState(true);
   const [entityId, setEntityId] = useState('');
   const [activeScenario, setActiveScenario] = useState(null);
 
@@ -75,16 +74,15 @@ export default function Investigate() {
     setPipeStep(0);
     let step = 0;
     // Spread steps evenly over an estimated analysis window (ms per step)
-    // agentMode ≈ 40 s total → ~5000 ms/step; standard ≈ 25 s → ~3500 ms/step
-    const msPerStep = agentMode ? 5000 : 3500;
+    const msPerStep = 4500;
     timerRef.current = setInterval(() => {
       step += 1;
       if (step >= stepCount) { clearInterval(timerRef.current); return; }
       setPipeStep(step);
-      const labels = PIPELINE_STEPS.map(s => s.label);
-      addFeed('feedCyan', `[${String(step).padStart(2,'0')}] ${labels[step] || ''}…`);
+      const labels = AGENT_PHASES.map(p => p.label);
+      addFeed('feedCyan', `[Phase ${step}] ${labels[step-1] || 'Orchestration'} progressing...`);
     }, msPerStep);
-  }, [agentMode, addFeed]);
+  }, [addFeed]);
 
   /* ── Run investigation ── */
   const runInvestigation = async () => {
@@ -98,21 +96,19 @@ export default function Investigate() {
     setPipeStep(0);
     startRef.current = Date.now();
 
-    const stepCount = agentMode ? 8 : 7;
-    addFeed('feedCyan', `Starting ${agentMode ? 'AGENT' : 'STANDARD'} investigation…`);
+    const stepCount = 8;
+    addFeed('feedCyan', 'Starting investigation…');
     animatePipeline(stepCount);
 
     try {
-      const data = agentMode
-        ? await investigateAgent(logs, entityId || null)
-        : await investigate(logs);
+      const data = await investigateAgent(logs, entityId || null);
 
       clearInterval(timerRef.current);
       setPipeStep(stepCount);
 
       const elapsed = ((Date.now() - startRef.current) / 1000).toFixed(1);
-      const sev = agentMode ? data.severity : data.severity;
-      addFeed('feedSuccess', `Investigation complete in ${elapsed}s — Severity: ${sev}`);
+      const risk = data.risk_score || 0;
+      addFeed('feedSuccess', `Investigation complete in ${elapsed}s — Risk Score: ${risk}/100`);
 
       setResult(data);
       setStatus('success');
@@ -133,7 +129,7 @@ export default function Investigate() {
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [logs, agentMode, entityId]);
+  }, [logs, entityId]);
 
   const lineCount = logs ? logs.split('\n').length : 0;
 
@@ -206,21 +202,19 @@ export default function Investigate() {
           </div>
         </div>
 
-        {/* Pipeline stack */}
+        {/* Agent Specialists */}
         <div className={styles.module}>
           <div className={styles.moduleHeader}>
-            <span className={styles.moduleLabel}>PIPELINE STACK</span>
+            <span className={styles.moduleLabel}>ORCHESTRATOR SPECIALISTS</span>
           </div>
           <div className={styles.stackTable}>
             {[
-              ['NORMALIZE', 'Regex + JSON parser'],
-              ['CLASSIFY', 'Rule engine (10 types)'],
-              ['LSTM', 'PyTorch Sequence Autoencoder'],
-              ['THREAT INTEL', 'IP / hash / command DB'],
-              ['RAG', 'ChromaDB + MITRE ATT&CK'],
-              ['LLM', 'GPT-OSS 120B (OpenRouter)'],
-              ['GRAPH', 'NetworkX kill-chain'],
-              ['AGENT', 'Cross-session correlator'],
+              ['BEHAVIOR', 'LSTM behavioral scoring'],
+              ['PATTERN', 'Heuristic attack patterns'],
+              ['THREAT CTX', 'IP/hash reputation'],
+              ['IOC ANALYST', 'Automated extraction'],
+              ['MITRE RAG', 'ATT&CK semantic search'],
+              ['ORCHESTRATOR', 'ReAct cross-session agent'],
             ].map(([k, v]) => (
               <div className={styles.stackRow} key={k}>
                 <span className={styles.stackKey}>{k}</span>
@@ -230,34 +224,24 @@ export default function Investigate() {
           </div>
         </div>
 
-        {/* Agent mode */}
+        {/* Agent Config */}
         <div className={styles.module}>
           <div className={styles.moduleHeader}>
-            <span className={styles.moduleLabel}>AGENT MODE</span>
-            <label className={styles.toggle}>
-              <input
-                type="checkbox"
-                checked={agentMode}
-                onChange={e => setAgentMode(e.target.checked)}
-              />
-              <span className={styles.toggleSlider} />
-            </label>
+            <span className={styles.moduleLabel}>AGENT CONFIGURATION</span>
           </div>
-          {agentMode && (
-            <div className={styles.agentConfig}>
-              <input
-                type="text"
-                className={styles.agentInput}
-                placeholder="Entity ID (auto-detect)"
-                value={entityId}
-                onChange={e => setEntityId(e.target.value)}
-              />
-              <div className={styles.agentInfo}>
-                <Info size={10} />
-                <span>Submit multiple sessions for same entity to see cross-session correlation</span>
-              </div>
+          <div className={styles.agentConfig}>
+            <input
+              type="text"
+              className={styles.agentInput}
+              placeholder="Entity ID (auto-detect)"
+              value={entityId}
+              onChange={e => setEntityId(e.target.value)}
+            />
+            <div className={styles.agentInfo}>
+              <Info size={10} />
+              <span>Submit multiple sessions for same entity to see cross-session correlation</span>
             </div>
-          )}
+          </div>
         </div>
 
         {/* Run button */}
@@ -278,9 +262,9 @@ export default function Investigate() {
       {/* ──────────────── CENTER PANEL ──────────────── */}
       <main className={styles.centerPanel}>
         {status === 'idle' && <EmptyState />}
-        {status === 'loading' && <LoadingState pipeStep={pipeStep} agentMode={agentMode} startTime={startRef.current} />}
+        {status === 'loading' && <LoadingState pipeStep={pipeStep} startTime={startRef.current} />}
         {status === 'success' && result && (
-          <ReportPanel data={result} agentMode={agentMode} />
+          <InvestigationConsole data={result} />
         )}
         {status === 'error' && (
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 12 }}>

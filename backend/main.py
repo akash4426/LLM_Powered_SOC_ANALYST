@@ -91,18 +91,15 @@ async def add_private_network_header(request: Request, call_next):
 def health_check():
     return {
         "status": "SOC Analyst API running",
-        "version": "5.0.0",
-        "pipeline": [
-            "log_normalization",
-            "event_extraction",
-            "session_building",
-            "lstm_anomaly_detection",
-            "threat_intel_enrichment",
-            "mitre_rag_retrieval",
-            "llm_investigation",
-            "attack_graph_reconstruction",
-            "incident_report_generation",
-            "agent_correlation",          # Agentic AI Layer
+        "version": "7.0.0",
+        "architecture": "Agent-Oriented AI Investigation System",
+        "orchestration_phases": [
+            "OBSERVE", "THINK", "PLAN", "EXECUTE",
+            "EVALUATE", "FUSE", "DECIDE", "EXPLAIN"
+        ],
+        "specialists": [
+            "Behavior Analyst", "Pattern Analyst",
+            "Threat Context", "IOC Analyst", "MITRE Knowledge"
         ],
         "agent_entities_tracked": len(get_memory_store().get_all_entities()),
     }
@@ -125,29 +122,29 @@ def dashboard_stats():
         total_sessions += len(memory.get_sessions(eid))
 
     return {
-        "version": "5.0.0",
+        "version": "7.0.0",
         "status": "operational",
         "components": {
             "lstm_model": "loaded",
             "rag_chromadb": "loaded",
             "llm_api": os.getenv("OPENROUTER_MODEL", "openai/gpt-oss-120b:free"),
-            "agent_engine": "react_v4",
+            "agent_engine": "orchestrator_v7",
             "jwt_auth": "enabled",
         },
-        "pipeline_stages": 10,
-        "agent_tools": 6,
+        "orchestration_phases": 8,
+        "specialist_count": 5,
         "campaign_patterns": 7,
         "attack_event_types": 10,
         "mitre_techniques_indexed": 500,
         "entities_tracked": len(entities),
         "active_sessions": total_sessions,
         "agents": [
-            {"id": 1, "name": "AnomalyScoreAgent", "role": "LSTM behavioral anomaly scoring", "weight": 0.35},
-            {"id": 2, "name": "RAGLookupAgent",   "role": "MITRE ATT&CK semantic retrieval",  "weight": 0.20},
-            {"id": 3, "name": "ThreatIntelAgent", "role": "IP/hash/command reputation",       "weight": 0.10},
-            {"id": 4, "name": "PatternMatchAgent", "role": "8 heuristic attack patterns",     "weight": 0.10},
-            {"id": 5, "name": "IOCExtractorAgent", "role": "Automated indicator parsing",      "weight": 0.10},
-            {"id": 6, "name": "PlaybookAgent",     "role": "Severity-adaptive response gen",  "weight": 0.15},
+            {"id": 1, "name": "Behavior Analyst",  "role": "LSTM behavioral anomaly scoring",    "weight": 0.35},
+            {"id": 2, "name": "MITRE Knowledge",    "role": "MITRE ATT&CK semantic retrieval",   "weight": 0.20},
+            {"id": 3, "name": "Threat Context",     "role": "IP/hash/command reputation",        "weight": 0.10},
+            {"id": 4, "name": "Pattern Analyst",    "role": "8 heuristic attack patterns",       "weight": 0.10},
+            {"id": 5, "name": "IOC Analyst",        "role": "Automated indicator extraction",    "weight": 0.10},
+            {"id": 6, "name": "Playbook Generator", "role": "Severity-adaptive response gen",    "weight": 0.15},
         ],
         "confidence_formula": "0.35·LSTM + 0.20·RAG + 0.15·Correlation + 0.10·ThreatIntel + 0.10·Pattern + 0.10·IOC",
         "risk_formula": "anomaly·35 + confidence·25 + TI·20 + pattern·10 + correlation·10",

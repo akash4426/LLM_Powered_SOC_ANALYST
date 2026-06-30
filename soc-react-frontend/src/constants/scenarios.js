@@ -102,22 +102,22 @@ export const SEVERITY_COLORS = {
   INFO: '#4488ff',
 };
 
-export const PIPELINE_STEPS = [
-  { id: 0, label: 'Log Normalization',        desc: 'Regex + JSON parser',        icon: '🗂' },
-  { id: 1, label: 'Event Extraction',          desc: 'Rule-based (10 types)',       icon: '🔍' },
-  { id: 2, label: 'LSTM Anomaly Detection',    desc: 'Sequence autoencoder',        icon: '🧠' },
-  { id: 3, label: 'Threat Intel Lookup',       desc: 'IP/hash/command DB',          icon: '🔎' },
-  { id: 4, label: 'MITRE ATT&CK RAG',          desc: 'ChromaDB semantic search',    icon: '📚' },
-  { id: 5, label: 'LLM Investigation',         desc: 'GPT-OSS 120B via OpenRouter',       icon: '🤖' },
-  { id: 6, label: 'Attack Graph Build',        desc: 'NetworkX kill-chain',         icon: '🕸' },
-  { id: 7, label: 'Agent Correlation',         desc: 'ReAct cross-session',         icon: '⚡' },
+export const AGENT_PHASES = [
+  { id: 0, label: 'OBSERVE',  desc: 'Collect facts & build session', icon: '01' },
+  { id: 1, label: 'THINK',    desc: 'Deterministic suspicion assessment', icon: '02' },
+  { id: 2, label: 'PLAN',     desc: 'Dynamic tool selection', icon: '03' },
+  { id: 3, label: 'EXECUTE',  desc: 'Invoke selected specialists', icon: '04' },
+  { id: 4, label: 'EVALUATE', desc: 'Assess evidence & escalate', icon: '05' },
+  { id: 5, label: 'FUSE',     desc: 'Merge cross-session memory', icon: '06' },
+  { id: 6, label: 'DECIDE',   desc: 'Compute severity & risk score', icon: '07' },
+  { id: 7, label: 'EXPLAIN',  desc: 'Generate LLM narrative & playbook', icon: '08' },
 ];
 
-export const AGENTS = [
-  { id: 1, name: 'AnomalyScoreAgent', role: 'LSTM behavioral scoring',         weight: 35, color: '#ff4444', phase: 'ACT' },
-  { id: 2, name: 'RAGLookupAgent',    role: 'MITRE ATT&CK semantic retrieval', weight: 20, color: '#4488ff', phase: 'ACT' },
-  { id: 3, name: 'ThreatIntelAgent',  role: 'IP/hash/command reputation',      weight: 10, color: '#ff9800', phase: 'ACT' },
-  { id: 4, name: 'PatternMatchAgent', role: '8 heuristic attack patterns',     weight: 10, color: '#ffd740', phase: 'ACT' },
-  { id: 5, name: 'IOCExtractorAgent', role: 'Automated indicator parsing',     weight: 10, color: '#00e676', phase: 'ACT' },
-  { id: 6, name: 'PlaybookAgent',     role: 'Severity-adaptive response gen',  weight: 15, color: '#aa66ff', phase: 'EXPLAIN' },
+export const SPECIALISTS = [
+  { id: 1, name: 'Behavior Analyst', role: 'LSTM behavioral scoring', color: '#ff4444' },
+  { id: 2, name: 'Pattern Analyst',  role: 'Heuristic attack patterns', color: '#ffd740' },
+  { id: 3, name: 'Threat Context',   role: 'IP/hash reputation', color: '#ff9800' },
+  { id: 4, name: 'IOC Analyst',      role: 'Automated indicator extraction', color: '#00e676' },
+  { id: 5, name: 'MITRE Knowledge',  role: 'ATT&CK semantic retrieval', color: '#4488ff' },
 ];
+

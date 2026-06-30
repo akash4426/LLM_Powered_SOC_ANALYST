@@ -1,0 +1,105 @@
+.trackerContainer {
+  background: var(--bg-2);
+  border: 1px solid var(--border-0);
+  border-radius: var(--radius-md);
+  padding: 0.875rem 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.trackerTitle {
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: var(--text-2);
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  margin-bottom: 0.875rem;
+}
+
+.phaseList {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.phaseItem {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0.625rem;
+  border-radius: var(--radius-sm);
+  background: var(--bg-1);
+  border: 1px solid transparent;
+  transition: all 0.25s ease;
+  opacity: 0.45;
+}
+
+.phaseItem.active {
+  opacity: 1;
+  border-color: var(--cyan);
+  background: var(--cyan-dim);
+  box-shadow: 0 0 12px rgba(0,212,255,0.08);
+}
+
+.phaseItem.completed {
+  opacity: 0.75;
+  border-color: var(--border-0);
+}
+
+.iconBox {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  color: var(--text-2);
+  font-size: 0.65rem;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.active .iconBox {
+  color: var(--cyan);
+  background: rgba(0,212,255,0.12);
+}
+
+.completed .iconBox {
+  color: var(--green);
+  background: var(--green-dim);
+}
+
+.spin {
+  animation: spin 1.5s linear infinite;
+}
+
+@keyframes spin {
+  100% { transform: rotate(360deg); }
+}
+
+.phaseDetails {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.phaseHeader {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.phaseLabel {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  letter-spacing: 0.5px;
+}
+
+.phaseDesc {
+  font-size: 0.7rem;
+  color: var(--text-2);
+}

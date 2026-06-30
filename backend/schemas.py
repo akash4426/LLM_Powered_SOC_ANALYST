@@ -141,7 +141,17 @@ class AgentAnalysisResponse(BaseModel):
     # Shows improvement from compound analysis
     detection_improvement: Optional[str] = None
 
-    # ── NEW: Agent reasoning & tool outputs ──
+    # ── NEW: Enterprise Agent Console State ──
+    investigation_status: str = "COMPLETED"
+    suspicion_level: str = "LOW"
+    investigation_hypothesis: Optional[str] = None
+    planned_tools: List[str] = Field(default_factory=list)
+    completed_tools: List[str] = Field(default_factory=list)
+    skipped_tools: List[str] = Field(default_factory=list)
+    escalation_tools: List[str] = Field(default_factory=list)
+    evidence_board: List[Dict[str, Any]] = Field(default_factory=list)
+
+    # ── Legacy/Core Agent trace ──
     reasoning_trace: List[Dict[str, Any]] = Field(default_factory=list)
     tool_results: List[Dict[str, Any]] = Field(default_factory=list)
     iocs_extracted: Dict[str, Any] = Field(default_factory=dict)

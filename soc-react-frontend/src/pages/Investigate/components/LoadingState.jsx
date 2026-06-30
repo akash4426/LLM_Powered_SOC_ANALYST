@@ -1,9 +1,9 @@
 // src/pages/Investigate/components/LoadingState.jsx
 import { useState, useEffect } from 'react';
-import { PIPELINE_STEPS } from '../../../constants/scenarios';
+import { AGENT_PHASES } from '../../../constants/scenarios';
 import styles from './LoadingState.module.css';
 
-export default function LoadingState({ pipeStep, agentMode, startTime }) {
+export default function LoadingState({ pipeStep, startTime }) {
   const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
@@ -13,12 +13,12 @@ export default function LoadingState({ pipeStep, agentMode, startTime }) {
     return () => clearInterval(iv);
   }, [startTime]);
 
-  const steps = agentMode ? PIPELINE_STEPS : PIPELINE_STEPS.slice(0, 7);
-  const progress = steps.length > 0 ? Math.round((pipeStep / steps.length) * 100) : 0;
+  const total = AGENT_PHASES.length;
+  const progress = total > 0 ? Math.round((pipeStep / total) * 100) : 0;
 
   return (
     <div className={styles.container}>
-      {/* ── Header ── */}
+      {/* Header */}
       <div className={styles.header}>
         <div className={styles.spinnerBlock}>
           <div className={styles.spinner} />
@@ -26,15 +26,12 @@ export default function LoadingState({ pipeStep, agentMode, startTime }) {
           <div className={styles.spinnerCore} />
         </div>
         <div>
-          <div className={styles.title}>INVESTIGATION IN PROGRESS</div>
-          <div className={styles.sub}>
-            Running {steps.length}-stage AI analysis pipeline
-            {agentMode && <span className={styles.agentBadge}>AGENT MODE</span>}
-          </div>
+          <div className={styles.title}>AGENT ORCHESTRATION IN PROGRESS</div>
+          <div className={styles.sub}>Autonomous analyst investigating session events</div>
         </div>
       </div>
 
-      {/* ── Progress bar ── */}
+      {/* Progress bar */}
       <div className={styles.progressWrap}>
         <div className={styles.progressTrack}>
           <div className={styles.progressFill} style={{ width: `${progress}%` }} />
@@ -43,45 +40,49 @@ export default function LoadingState({ pipeStep, agentMode, startTime }) {
         <span className={styles.progressPct}>{progress}%</span>
       </div>
 
-      {/* ── Pipeline steps ── */}
+      {/* Phase steps */}
       <div className={styles.pipeline}>
-        {steps.map((step, i) => {
+        {AGENT_PHASES.map((phase, i) => {
           const done   = pipeStep > i;
           const active = pipeStep === i;
-          const pending = pipeStep < i;
+
+          const cls = [
+            styles.step,
+            done   ? styles.done    : '',
+            active ? styles.active  : '',
+            !done && !active ? styles.pending : '',
+          ].filter(Boolean).join(' ');
+
           return (
-            <div
-              key={step.id}
-              className={`${styles.step} ${done ? styles.done : ''} ${active ? styles.active : ''} ${pending ? styles.pending : ''}`}
-            >
-              {/* Status icon */}
+            <div key={phase.id} className={cls}>
               <div className={styles.stepIcon}>
-                {done   && <span className={styles.iconDone}>✓</span>}
-                {active && <span className={styles.iconActive} />}
-                {pending && <span className={styles.iconPending}>{String(i + 1).padStart(2,'0')}</span>}
+                {done
+                  ? <span className={styles.iconDone}>✓</span>
+                  : active
+                    ? <span className={styles.iconActive} />
+                    : <span className={styles.iconPending}>{phase.icon}</span>
+                }
               </div>
-
-              {/* Step info */}
               <div className={styles.stepInfo}>
-                <div className={styles.stepLabel}>{step.label}</div>
-                <div className={styles.stepDesc}>{step.desc}</div>
+                <div className={styles.stepLabel}>{phase.label}</div>
+                <div className={styles.stepDesc}>
+                  {active ? 'Running...' : done ? 'Completed' : phase.desc}
+                </div>
               </div>
-
-              {/* Active scan line */}
               {active && <div className={styles.scanLine} />}
             </div>
           );
         })}
       </div>
 
-      {/* ── Footer ── */}
+      {/* Footer */}
       <div className={styles.footer}>
         <div className={styles.elapsed}>
           <span className={styles.elapsedLabel}>ELAPSED</span>
           <span className={styles.elapsedVal}>{elapsed}s</span>
           <span className={styles.elapsedSep}>·</span>
           <span className={styles.elapsedLabel}>STEP</span>
-          <span className={styles.elapsedVal}>{Math.min(pipeStep + 1, steps.length)}/{steps.length}</span>
+          <span className={styles.elapsedVal}>{Math.min(pipeStep + 1, total)}/{total}</span>
         </div>
         <p className={styles.note}>LLM inference typically takes 20–60 s. Do not close this tab.</p>
       </div>
