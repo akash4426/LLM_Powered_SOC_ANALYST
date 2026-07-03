@@ -2,7 +2,7 @@
 import axios from 'axios';
 import { API_BASE } from '../constants/scenarios';
 
-const client = axios.create({ baseURL: API_BASE, timeout: 120000 });
+const client = axios.create({ baseURL: API_BASE, timeout: 600000 });
 
 // Attach JWT automatically
 client.interceptors.request.use((config) => {

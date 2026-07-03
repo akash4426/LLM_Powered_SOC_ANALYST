@@ -1,37 +1,53 @@
 """
-agent_layer.py — True Agent-Oriented AI Investigation System
+agent_layer.py — Agentic AI Investigation Orchestrator
+========================================================
 
-The Agent Orchestrator manages the full lifecycle:
-1. OBSERVE  - Collect facts (processed session)
-2. THINK    - Heuristic deterministic suspicion assessment
-3. PLAN     - Dynamically decide required specialists
-4. EXECUTE  - Invoke selected specialists
-5. EVALUATE - Assess intermediate evidence and escalate if needed
-6. FUSE     - Merge evidence and historical cross-session memory
-7. DECIDE   - Compute Severity, Risk, Confidence deterministically
-8. EXPLAIN  - LLM generated narrative of the incident
+Implements the full agentic investigation loop:
+
+  1. PERCEIVE  — Normalize logs → build InvestigationObject
+  2. PLAN      — LLM generates investigation hypothesis & tool plan
+  3. VALIDATE  — Policy engine validates the plan
+  4. EXECUTE   — Tool orchestrator runs approved specialists
+  5. AGGREGATE — Evidence aggregator merges results
+  6. REFLECT   — LLM evaluates evidence sufficiency & hypothesis validity
+  7. REPLAN?   — If more evidence needed AND iterations remaining → goto PLAN
+  8. DECIDE    — Deterministic engine computes severity/risk/confidence/action
+  9. REPORT    — LLM generates human-readable investigation report
+
+Each phase produces a ReasoningStep with execution time and structured
+reasoning for full transparency in the frontend.
 """
 
-import logging, time, threading, uuid, re, json
+import logging
+import time
+import threading
+import uuid
 from datetime import datetime, timezone
-from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional
-from collections import Counter
+from typing import Any, Dict, List, Optional
 
-from backend.models.lstm_model import score_sequence
-from backend.rag.rag_engine import retrieve_context
-from backend.processing.event_extractor import SecurityEvent, get_mitre_query
+from backend.perception import perceive, InvestigationObject
+from backend.reasoning.planner import generate_plan, InvestigationPlan
+from backend.reasoning.reflection import reflect, ReflectionResult
+from backend.reasoning.policy_engine import PolicyEngine
+from backend.reasoning.evidence_aggregator import EvidenceAggregator
+from backend.reasoning.decision_engine import DecisionEngine
+from backend.reasoning.report_generator import generate_investigation_report
 from backend.reasoning.agent_tools import (
-    ToolResult, ReasoningStep,
-    run_anomaly_score_tool, run_rag_lookup_tool, run_threat_intel_tool,
-    run_ioc_extractor_tool, run_pattern_match_tool, run_playbook_tool,
+    ToolResult,
+    ReasoningStep,
+    execute_tools,
+    run_playbook_tool,
 )
 
 logger = logging.getLogger(__name__)
 
+
 # ═══════════════════════════════════════════════════════════════════════════════
-# 1. SESSION RECORD & ENTITY MEMORY
+# SESSION RECORD & ENTITY MEMORY (preserved from original architecture)
 # ═══════════════════════════════════════════════════════════════════════════════
+
+from dataclasses import dataclass, field
+
 
 @dataclass
 class SessionRecord:
@@ -45,6 +61,7 @@ class SessionRecord:
     events_summary: List[Dict[str, Any]]
     entity_id: str
 
+
 class EntityMemoryStore:
     MAX_SESSIONS_PER_ENTITY = 50
     TTL_SECONDS = 86400
@@ -56,14 +73,21 @@ class EntityMemoryStore:
     def store_session(self, record: SessionRecord) -> None:
         with self._lock:
             entity = record.entity_id
-            if entity not in self._store: self._store[entity] = []
+            if entity not in self._store:
+                self._store[entity] = []
             cutoff = time.time() - self.TTL_SECONDS
-            self._store[entity] = [r for r in self._store[entity] if r.epoch >= cutoff]
+            self._store[entity] = [
+                r for r in self._store[entity] if r.epoch >= cutoff
+            ]
             self._store[entity].append(record)
             if len(self._store[entity]) > self.MAX_SESSIONS_PER_ENTITY:
-                self._store[entity] = self._store[entity][-self.MAX_SESSIONS_PER_ENTITY:]
+                self._store[entity] = self._store[entity][
+                    -self.MAX_SESSIONS_PER_ENTITY :
+                ]
 
-    def get_sessions(self, entity_id: str, window_seconds: int = 21600) -> List[SessionRecord]:
+    def get_sessions(
+        self, entity_id: str, window_seconds: int = 21600
+    ) -> List[SessionRecord]:
         with self._lock:
             records = self._store.get(entity_id, [])
             cutoff = time.time() - window_seconds
@@ -73,435 +97,514 @@ class EntityMemoryStore:
         with self._lock:
             return list(self._store.keys())
 
+
 _memory = EntityMemoryStore()
-def get_memory_store() -> EntityMemoryStore: return _memory
-def update_memory(record: SessionRecord) -> None: _memory.store_session(record)
+
+
+def get_memory_store() -> EntityMemoryStore:
+    return _memory
+
+
+def update_memory(record: SessionRecord) -> None:
+    _memory.store_session(record)
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 2. STATE MANAGEMENT & HYPOTHESIS
+# CAMPAIGN PATTERN DETECTION (for cross-session correlation)
 # ═══════════════════════════════════════════════════════════════════════════════
-
-@dataclass
-class InvestigationState:
-    session_id: str
-    entity_id: str
-    suspicion_level: str = "LOW"
-    investigation_hypothesis: str = "Awaiting initial assessment"
-    
-    planned_tools: List[str] = field(default_factory=list)
-    skipped_tools: List[str] = field(default_factory=list)
-    completed_tools: List[str] = field(default_factory=list)
-    escalation_tools: List[str] = field(default_factory=list)
-    
-    evidence_board: List[Dict[str, Any]] = field(default_factory=list)
-    
-    # Internal running states
-    lstm_score: float = 0.0
-    pattern_score: float = 0.0
-    pattern_name: Optional[str] = None
-    threat_intel_score: float = 0.0
-    ioc_count: int = 0
-    rag_matches: int = 0
-    correlation_depth: int = 0
-    mitre_mappings: List[str] = field(default_factory=list)
-    compound_mitre_mappings: List[str] = field(default_factory=list)
-    compound_anomaly_score: float = 0.0
-    
-    def add_evidence(self, description: str, source: str, contribution: float):
-        self.evidence_board.append({
-            "description": description,
-            "source": source,
-            "contribution": contribution
-        })
 
 CAMPAIGN_PATTERNS = {
     "full_kill_chain": ["LOGIN", "PRIV_ESC", "LATERAL_MOVE", "EXFILTRATION"],
     "privilege_escalation_chain": ["LOGIN", "PRIV_ESC", "SUSPICIOUS_EXEC"],
     "apt_lateral_movement": ["RECON", "LATERAL_MOVE", "EXFILTRATION"],
-    "ransomware_deployment": ["DEFENSE_EVADE", "SUSPICIOUS_EXEC", "EXFILTRATION"],
+    "ransomware_deployment": [
+        "DEFENSE_EVADE",
+        "SUSPICIOUS_EXEC",
+        "EXFILTRATION",
+    ],
     "brute_force_escalation": ["LOGIN", "LOGIN", "PRIV_ESC"],
     "recon_to_exploit": ["RECON", "SUSPICIOUS_EXEC", "PRIV_ESC"],
     "credential_theft": ["LOGIN", "SUSPICIOUS_EXEC", "EXFILTRATION"],
 }
 
-def build_hypothesis(combined_event_types: List[str]) -> Optional[str]:
+
+def _build_campaign_hypothesis(combined_event_types: List[str]) -> Optional[str]:
     for name, seq in CAMPAIGN_PATTERNS.items():
         idx = 0
         for et in combined_event_types:
-            if idx < len(seq) and et == seq[idx]: idx += 1
-            if idx == len(seq): return name
+            if idx < len(seq) and et == seq[idx]:
+                idx += 1
+            if idx == len(seq):
+                return name
     return None
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 3. DETERMINISTIC DECISIONS
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def compute_confidence(state: InvestigationState) -> float:
-    c = (0.35 * min(state.compound_anomaly_score, 1.0) +
-         0.20 * min(state.rag_matches / 5.0, 1.0) +
-         0.15 * min(state.correlation_depth / 4.0, 1.0) +
-         0.10 * min(state.threat_intel_score, 1.0) +
-         0.10 * min(state.pattern_score, 1.0) +
-         0.10 * min(state.ioc_count / 10.0, 1.0))
-    return round(min(c, 1.0), 4)
-
-def compute_severity(anomaly, corr_depth, mitre_count, ti_score):
-    if anomaly < 0.2:
-        return "MEDIUM" if (mitre_count >= 1 or ti_score > 0 or corr_depth >= 1) else "LOW"
-    elif anomaly < 0.6:
-        return "MEDIUM"
-    else:
-        return "CRITICAL" if (anomaly >= 0.8 or corr_depth >= 2 or mitre_count >= 2 or ti_score > 0.5) else "HIGH"
-
-def compute_risk_score(anomaly, confidence, ti_score, pattern_score, corr_depth):
-    raw = (anomaly * 35 + confidence * 25 + ti_score * 20 + pattern_score * 10 + min(corr_depth/4, 1.0) * 10)
-    return round(min(raw, 100.0), 1)
-
-def decide_action(confidence, severity="LOW"):
-    sev = severity.upper()
-    if sev == "CRITICAL" and confidence >= 0.5: return "AUTO_REMEDIATE"
-    elif sev in ("HIGH", "CRITICAL") or confidence >= 0.6: return "ESCALATE_L2"
-    return "MONITOR"
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 4. ORCHESTRATOR ENTRY
+# AGENTIC ORCHESTRATOR
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 def analyze_with_agent(
-    sequence: List[int], entity_id: str, timestamp: str,
-    events: List[SecurityEvent] = None, threat_intel_score: float = 0.0,
-    anomaly_score: Optional[float] = None, raw_logs: str = "",
+    sequence: List[int],
+    entity_id: str,
+    timestamp: str,
+    events: list = None,
+    threat_intel_score: float = 0.0,
+    anomaly_score: Optional[float] = None,
+    raw_logs: str = "",
 ) -> Dict[str, Any]:
+    """
+    Full Agentic AI Investigation Orchestrator.
+
+    Implements the complete investigation loop:
+    PERCEIVE → PLAN → VALIDATE → EXECUTE → AGGREGATE →
+    REFLECT → (REPLAN?) → DECIDE → REPORT
+
+    Each phase produces structured reasoning for full frontend transparency.
+    """
     events = events or []
     session_id = str(uuid.uuid4())[:8]
     reasoning_trace: List[Dict[str, Any]] = []
-    tool_results_all: List[Dict[str, Any]] = []
+    plan_history: List[Dict[str, Any]] = []
+    reflection_history: List[Dict[str, Any]] = []
+    replan_events: List[Dict[str, Any]] = []
+    planner_thoughts: List[str] = []
     t_start = time.time()
-    
-    state = InvestigationState(session_id=session_id, entity_id=entity_id)
 
-    # ── PHASE 1: OBSERVE ───────────────────────────────────────────────────
-    step1_start = time.time()
+    # Initialize engines
+    policy_engine = PolicyEngine()
+    evidence_aggregator = EvidenceAggregator()
+    decision_engine = DecisionEngine()
+
+    # ══════════════════════════════════════════════════════════════════════
+    # PHASE 1: PERCEIVE
+    # ══════════════════════════════════════════════════════════════════════
+    step_start = time.time()
+
+    inv_obj = perceive(raw_logs, entity_id=entity_id)
+
+    # Use pre-computed values from the caller if available
+    if anomaly_score is not None:
+        inv_obj.anomaly_score = anomaly_score
+
+    investigation_data = inv_obj.to_planner_dict()
+
     event_types = [e.event_type for e in events]
-    events_summary = [{"event_type": e.event_type, "description": e.description,
-                       "timestamp": e.timestamp, "source_ip": e.source_ip,
-                       "dest_ip": e.dest_ip, "user": e.user} for e in events]
-    try: epoch = datetime.fromisoformat(timestamp.replace("Z", "+00:00")).timestamp()
-    except: epoch = time.time()
+    events_summary = [
+        {
+            "event_type": e.event_type,
+            "description": e.description,
+            "timestamp": e.timestamp,
+            "source_ip": e.source_ip,
+            "dest_ip": e.dest_ip,
+            "user": e.user,
+        }
+        for e in events
+    ]
 
-    reasoning_trace.append(ReasoningStep(
-        1, "observe", f"Collected {len(events)} events for entity {entity_id}. Retrieved facts without reasoning.",
-        duration_ms=(time.time()-step1_start)*1000
-    ).to_dict())
+    try:
+        epoch = datetime.fromisoformat(
+            timestamp.replace("Z", "+00:00")
+        ).timestamp()
+    except Exception:
+        epoch = time.time()
 
-    # ── PHASE 2: THINK ─────────────────────────────────────────────────────
-    step2_start = time.time()
-    suspicious_types = [et for et in event_types if et != "NORMAL"]
-    ratio = len(suspicious_types) / max(len(event_types), 1)
-    
-    if ratio > 0.5 or (anomaly_score and anomaly_score > 0.7):
-        state.suspicion_level = "CRITICAL"
-        state.investigation_hypothesis = "High density of suspicious activity detected. Potential active attack."
-    elif ratio > 0.2 or len(set(suspicious_types)) >= 2:
-        state.suspicion_level = "HIGH"
-        state.investigation_hypothesis = "Multiple suspicious events detected. Investigating potential lateral movement."
-    elif ratio > 0:
-        state.suspicion_level = "MEDIUM"
-        state.investigation_hypothesis = "Isolated suspicious activity detected. Verifying intent."
-    else:
-        state.suspicion_level = "LOW"
-        state.investigation_hypothesis = "Normal baseline activity observed. Performing routine check."
+    reasoning_trace.append(
+        ReasoningStep(
+            1,
+            "perceive",
+            f"Perceived {inv_obj.total_events} events for entity {entity_id}. "
+            f"Anomaly score: {inv_obj.anomaly_score:.2f}. "
+            f"Event types: {', '.join(inv_obj.event_types)}.",
+            duration_ms=(time.time() - step_start) * 1000,
+        ).to_dict()
+    )
 
-    reasoning_trace.append(ReasoningStep(
-        2, "think", f"Deterministic Suspicion: {state.suspicion_level}. Hypothesis: {state.investigation_hypothesis}",
-        duration_ms=(time.time()-step2_start)*1000
-    ).to_dict())
+    # ══════════════════════════════════════════════════════════════════════
+    # PHASE 2: PLAN (LLM Investigation Planner)
+    # ══════════════════════════════════════════════════════════════════════
+    step_start = time.time()
 
-    # ── PHASE 3: PLAN ──────────────────────────────────────────────────────
-    step3_start = time.time()
-    ALL_SPECIALISTS = ["Behavior Analyst", "Pattern Analyst", "Threat Context", "IOC Analyst", "MITRE Knowledge"]
-    
-    state.planned_tools = ["Behavior Analyst", "Pattern Analyst"]
-    if state.suspicion_level in ["MEDIUM", "HIGH", "CRITICAL"]:
-        state.planned_tools.extend(["Threat Context", "IOC Analyst"])
-    if state.suspicion_level in ["HIGH", "CRITICAL"]:
-        state.planned_tools.append("MITRE Knowledge")
-        
-    state.skipped_tools = [s for s in ALL_SPECIALISTS if s not in state.planned_tools]
-    
-    reasoning_trace.append(ReasoningStep(
-        3, "plan", f"Planned {len(state.planned_tools)} specialists based on {state.suspicion_level} suspicion. Skipped {len(state.skipped_tools)}.",
-        duration_ms=(time.time()-step3_start)*1000
-    ).to_dict())
+    plan = generate_plan(investigation_data)
+    current_hypothesis = plan.hypothesis
+    planner_thoughts.append(plan.planner_reasoning)
+    plan_history.append(plan.to_dict())
 
-    # ── PHASE 4: EXECUTE ───────────────────────────────────────────────────
-    step4_start = time.time()
-    step_results = []
-    
-    # 1. Behavior Analyst
-    if "Behavior Analyst" in state.planned_tools:
-        ts = time.time()
-        res = run_anomaly_score_tool(sequence, anomaly_score)
-        res.tool_name = "Behavior Analyst"
-        state.completed_tools.append("Behavior Analyst")
-        step_results.append(res)
-        tool_results_all.append(res.to_dict())
-        state.lstm_score = res.output.get("anomaly_score", anomaly_score or 0.0)
-        state.compound_anomaly_score = state.lstm_score
-        state.add_evidence(f"Behavioral deviation calculated at {state.lstm_score:.2f}", "Behavior Analyst", state.lstm_score * 0.35)
+    reasoning_trace.append(
+        ReasoningStep(
+            2,
+            "plan",
+            f"Hypothesis: {current_hypothesis}. "
+            f"Strategy: {plan.strategy}. "
+            f"Planned {len(plan.tool_sequence)} specialists: "
+            f"{', '.join(plan.tool_sequence)}. "
+            f"{'(LLM-generated)' if plan.is_llm_generated else '(Deterministic fallback)'}",
+            duration_ms=(time.time() - step_start) * 1000,
+        ).to_dict()
+    )
 
-    # 2. Pattern Analyst
-    if "Pattern Analyst" in state.planned_tools:
-        ts = time.time()
-        res = run_pattern_match_tool(events)
-        res.tool_name = "Pattern Analyst"
-        state.completed_tools.append("Pattern Analyst")
-        step_results.append(res)
-        tool_results_all.append(res.to_dict())
-        state.pattern_name = res.output.get("pattern_name")
-        state.pattern_score = res.output.get("pattern_score", 0.0)
-        state.compound_anomaly_score = max(state.compound_anomaly_score, state.pattern_score)
-        if state.pattern_name:
-            state.add_evidence(f"Detected heuristic campaign pattern: {state.pattern_name}", "Pattern Analyst", state.pattern_score * 0.10)
+    # ══════════════════════════════════════════════════════════════════════
+    # AGENTIC LOOP: VALIDATE → EXECUTE → AGGREGATE → REFLECT → REPLAN?
+    # ══════════════════════════════════════════════════════════════════════
+    iteration = 0
+    max_iterations = policy_engine.config.max_replan_iterations
 
-    # 3. Threat Context
-    if "Threat Context" in state.planned_tools:
-        ts = time.time()
-        res = run_threat_intel_tool(events)
-        res.tool_name = "Threat Context"
-        state.completed_tools.append("Threat Context")
-        step_results.append(res)
-        tool_results_all.append(res.to_dict())
-        malicious = res.output.get("malicious_count", 0)
-        state.threat_intel_score = res.output.get("max_risk_score", 0) / 100.0
-        if malicious > 0:
-            state.add_evidence(f"Identified {malicious} known malicious indicators", "Threat Context", state.threat_intel_score * 0.10)
+    while True:
+        iteration += 1
+        policy_engine.increment_iteration()
 
-    # 4. IOC Analyst
-    if "IOC Analyst" in state.planned_tools:
-        ts = time.time()
-        res = run_ioc_extractor_tool(raw_logs)
-        res.tool_name = "IOC Analyst"
-        state.completed_tools.append("IOC Analyst")
-        step_results.append(res)
-        tool_results_all.append(res.to_dict())
-        ioc_data = res.output if res.status == "success" else {}
-        state.ioc_count = ioc_data.get("suspicious_count", 0)
-        if state.ioc_count > 0:
-            state.add_evidence(f"Extracted {state.ioc_count} suspicious IOCs from raw logs", "IOC Analyst", min(state.ioc_count/10.0, 1.0) * 0.10)
+        # ── PHASE 3: VALIDATE PLAN ────────────────────────────────────────
+        step_start = time.time()
 
-    # 5. MITRE Knowledge (RAG)
-    if "MITRE Knowledge" in state.planned_tools:
-        ts = time.time()
-        res = run_rag_lookup_tool(events)
-        res.tool_name = "MITRE Knowledge"
-        state.completed_tools.append("MITRE Knowledge")
-        step_results.append(res)
-        tool_results_all.append(res.to_dict())
-        state.mitre_mappings = res.output.get("techniques_found", [])
-        state.rag_matches = len(state.mitre_mappings)
-        state.compound_mitre_mappings = state.mitre_mappings
-        if state.rag_matches > 0:
-            state.add_evidence(f"Mapped {state.rag_matches} events to MITRE ATT&CK DB", "MITRE Knowledge", min(state.rag_matches/5.0, 1.0) * 0.20)
+        validated = policy_engine.validate_plan(plan.to_dict())
 
-    reasoning_trace.append(ReasoningStep(
-        4, "execute", f"Executed {len(state.completed_tools)} specialists. Gathered {len(state.evidence_board)} pieces of evidence.",
-        tool_results=step_results,
-        duration_ms=(time.time()-step4_start)*1000
-    ).to_dict())
+        reasoning_trace.append(
+            ReasoningStep(
+                len(reasoning_trace) + 1,
+                "validate",
+                f"Iteration {iteration}: Policy validated plan. "
+                f"{len(validated.approved_tools)} approved, "
+                f"{len(validated.rejected_tools)} rejected. "
+                f"Limits: {policy_engine.get_limits_status()}",
+                duration_ms=(time.time() - step_start) * 1000,
+            ).to_dict()
+        )
 
-    # ── PHASE 5: EVALUATE ──────────────────────────────────────────────────
-    step5_start = time.time()
-    escalated = False
-    escalated_results = []
-    
-    if state.pattern_name and "MITRE Knowledge" not in state.completed_tools:
-        state.escalation_tools.append("MITRE Knowledge")
-        res = run_rag_lookup_tool(events)
-        res.tool_name = "MITRE Knowledge"
-        state.completed_tools.append("MITRE Knowledge")
-        escalated_results.append(res)
-        tool_results_all.append(res.to_dict())
-        state.mitre_mappings = res.output.get("techniques_found", [])
-        state.compound_mitre_mappings = state.mitre_mappings
-        state.rag_matches = len(state.mitre_mappings)
-        state.add_evidence(f"Escalation: Mapped {state.rag_matches} events to MITRE", "MITRE Knowledge", min(state.rag_matches/5.0, 1.0) * 0.20)
-        escalated = True
+        # ── PHASE 4: EXECUTE SPECIALISTS ──────────────────────────────────
+        step_start = time.time()
 
-    if state.compound_anomaly_score > 0.4 and "Threat Context" not in state.completed_tools:
-        state.escalation_tools.append("Threat Context")
-        res = run_threat_intel_tool(events)
-        res.tool_name = "Threat Context"
-        state.completed_tools.append("Threat Context")
-        escalated_results.append(res)
-        tool_results_all.append(res.to_dict())
-        state.threat_intel_score = res.output.get("max_risk_score", 0) / 100.0
-        malicious = res.output.get("malicious_count", 0)
-        if malicious > 0:
-            state.add_evidence(f"Escalation: Found {malicious} malicious indicators", "Threat Context", state.threat_intel_score * 0.10)
-        escalated = True
+        evidence_aggregator.set_pending_tools(validated.approved_tools)
 
-    eval_msg = f"Escalated investigation with {len(state.escalation_tools)} additional tools." if escalated else "Evidence sufficient. No escalation needed."
-    reasoning_trace.append(ReasoningStep(
-        5, "evaluate", eval_msg, tool_results=escalated_results,
-        duration_ms=(time.time()-step5_start)*1000
-    ).to_dict())
+        tool_results = execute_tools(
+            approved_tools=validated.approved_tools,
+            raw_events=inv_obj._raw_events,
+            raw_logs=inv_obj._raw_logs,
+            event_sequence=inv_obj.event_sequence_ints,
+            anomaly_score=inv_obj.anomaly_score,
+        )
 
-    # ── PHASE 6: FUSE ──────────────────────────────────────────────────────
-    step6_start = time.time()
-    
+        # Aggregate results
+        for result in tool_results:
+            evidence_aggregator.add_tool_result(result.to_dict())
+
+        policy_engine.record_tool_invocations(len(tool_results))
+
+        reasoning_trace.append(
+            ReasoningStep(
+                len(reasoning_trace) + 1,
+                "execute",
+                f"Iteration {iteration}: Executed {len(tool_results)} specialists. "
+                f"Gathered {len(evidence_aggregator._evidence_items)} evidence items.",
+                tool_results=tool_results,
+                duration_ms=(time.time() - step_start) * 1000,
+            ).to_dict()
+        )
+
+        # ── PHASE 5: REFLECT ─────────────────────────────────────────────
+        step_start = time.time()
+
+        accumulated = evidence_aggregator.get_accumulated_evidence()
+
+        reflection = reflect(
+            investigation_object=investigation_data,
+            current_hypothesis=current_hypothesis,
+            accumulated_evidence=accumulated.to_planner_summary(),
+            completed_tools=accumulated.completed_tools,
+            iteration=iteration,
+        )
+
+        reflection_history.append(reflection.to_dict())
+
+        # Update hypothesis if reflection suggests a change
+        if not reflection.hypothesis_still_valid and reflection.updated_hypothesis:
+            old_hyp = current_hypothesis
+            current_hypothesis = reflection.updated_hypothesis
+            replan_events.append({
+                "iteration": iteration,
+                "reason": "Hypothesis updated by reflection",
+                "old_hypothesis": old_hyp,
+                "new_hypothesis": current_hypothesis,
+            })
+
+        reasoning_trace.append(
+            ReasoningStep(
+                len(reasoning_trace) + 1,
+                "reflect",
+                f"Iteration {iteration}: {reflection.reasoning}. "
+                f"Hypothesis {'still valid' if reflection.hypothesis_still_valid else 'UPDATED'}. "
+                f"{'More evidence needed.' if reflection.needs_more_evidence else 'Evidence sufficient.'}",
+                duration_ms=(time.time() - step_start) * 1000,
+            ).to_dict()
+        )
+
+        # ── REPLAN CHECK ──────────────────────────────────────────────────
+        if (
+            reflection.needs_more_evidence
+            and reflection.additional_tools_needed
+            and policy_engine.check_iteration_limit()
+        ):
+            # Generate a follow-up plan
+            step_start = time.time()
+
+            replan_events.append({
+                "iteration": iteration,
+                "reason": f"Reflection requested additional tools: {reflection.additional_tools_needed}",
+                "tools_requested": reflection.additional_tools_needed,
+            })
+
+            plan = generate_plan(
+                investigation_data,
+                accumulated_evidence=accumulated.to_planner_summary(),
+            )
+
+            # Override with reflection's specific tool requests if planner
+            # doesn't include them
+            for tool in reflection.additional_tools_needed:
+                if tool not in plan.tool_sequence:
+                    plan.tool_sequence.append(tool)
+
+            plan.hypothesis = current_hypothesis
+            planner_thoughts.append(plan.planner_reasoning)
+            plan_history.append(plan.to_dict())
+
+            reasoning_trace.append(
+                ReasoningStep(
+                    len(reasoning_trace) + 1,
+                    "replan",
+                    f"Replanning iteration {iteration + 1}: "
+                    f"New plan with {len(plan.tool_sequence)} tools. "
+                    f"Hypothesis: {current_hypothesis}",
+                    duration_ms=(time.time() - step_start) * 1000,
+                ).to_dict()
+            )
+
+            continue  # Loop back to VALIDATE → EXECUTE → REFLECT
+        else:
+            break  # Evidence sufficient or limits reached
+
+    # ══════════════════════════════════════════════════════════════════════
+    # PHASE 6: CROSS-SESSION MEMORY FUSION
+    # ══════════════════════════════════════════════════════════════════════
+    step_start = time.time()
+
+    accumulated = evidence_aggregator.get_accumulated_evidence()
+
     current_record = SessionRecord(
-        session_id=session_id, timestamp=timestamp, epoch=epoch,
-        sequence=sequence, event_types=event_types,
-        anomaly_score=state.compound_anomaly_score, mitre_mappings=state.compound_mitre_mappings,
-        events_summary=events_summary, entity_id=entity_id
+        session_id=session_id,
+        timestamp=timestamp,
+        epoch=epoch,
+        sequence=sequence,
+        event_types=event_types,
+        anomaly_score=accumulated.compound_anomaly_score,
+        mitre_mappings=accumulated.compound_mitre_mappings,
+        events_summary=events_summary,
+        entity_id=entity_id,
     )
     update_memory(current_record)
 
     all_sessions = _memory.get_sessions(entity_id)
-    suspicious_sessions = [s for s in all_sessions if any(et != "NORMAL" for et in s.event_types)]
-    
-    if len(suspicious_sessions) > 1:
-        state.correlation_depth = len(suspicious_sessions)
-        combined_types = []
-        for s in suspicious_sessions: combined_types.extend(s.event_types)
-        hyp = build_hypothesis(combined_types)
-        if hyp: 
-            state.investigation_hypothesis = f"Cross-session correlation reveals: {hyp.replace('_',' ')}"
-            state.add_evidence(f"Historical memory linked {state.correlation_depth} sessions to a unified campaign", "Investigation Memory", 0.15)
-        else:
-            state.add_evidence(f"Entity has a history of {state.correlation_depth} suspicious sessions", "Investigation Memory", 0.10)
+    suspicious_sessions = [
+        s for s in all_sessions if any(et != "NORMAL" for et in s.event_types)
+    ]
 
-        # Merge MITRE
+    if len(suspicious_sessions) > 1:
+        evidence_aggregator.correlation_depth = len(suspicious_sessions)
+
+        combined_types: List[str] = []
+        for s in suspicious_sessions:
+            combined_types.extend(s.event_types)
+
+        campaign_hyp = _build_campaign_hypothesis(combined_types)
+        if campaign_hyp:
+            current_hypothesis = (
+                f"Cross-session correlation reveals: {campaign_hyp.replace('_', ' ')}"
+            )
+
+        evidence_aggregator.add_memory_evidence(
+            correlation_depth=len(suspicious_sessions),
+            hypothesis=campaign_hyp,
+        )
+
+        # Merge MITRE mappings from historical sessions
         for s in suspicious_sessions:
             for m in s.mitre_mappings:
-                if m not in state.compound_mitre_mappings:
-                    state.compound_mitre_mappings.append(m)
+                if m not in evidence_aggregator.compound_mitre_mappings:
+                    evidence_aggregator.compound_mitre_mappings.append(m)
 
-    reasoning_trace.append(ReasoningStep(
-        6, "fuse", f"Fused evidence. Memory correlation depth = {state.correlation_depth}. Total MITRE = {len(state.compound_mitre_mappings)}",
-        duration_ms=(time.time()-step6_start)*1000
-    ).to_dict())
+    reasoning_trace.append(
+        ReasoningStep(
+            len(reasoning_trace) + 1,
+            "fuse",
+            f"Memory fusion: correlation depth={evidence_aggregator.correlation_depth}. "
+            f"Total MITRE={len(evidence_aggregator.compound_mitre_mappings)}.",
+            duration_ms=(time.time() - step_start) * 1000,
+        ).to_dict()
+    )
 
-    # ── PHASE 7: DECIDE ────────────────────────────────────────────────────
-    step7_start = time.time()
-    
-    confidence = compute_confidence(state)
-    severity = compute_severity(state.compound_anomaly_score, state.correlation_depth, len(state.compound_mitre_mappings), state.threat_intel_score)
-    decision = decide_action(confidence, severity)
-    risk_score = compute_risk_score(state.compound_anomaly_score, confidence, state.threat_intel_score, state.pattern_score, state.correlation_depth)
+    # ══════════════════════════════════════════════════════════════════════
+    # PHASE 7: DETERMINISTIC DECISION
+    # ══════════════════════════════════════════════════════════════════════
+    step_start = time.time()
 
-    # Incident type
-    actual_depth = state.correlation_depth
-    if state.pattern_name == "BRUTE_FORCE": itype = "Brute Force Attack Attempt"
-    elif state.pattern_name == "SUSPICIOUS_EXECUTION_CHAIN": itype = "Suspicious Execution Chain"
-    elif state.pattern_name == "PRIVILEGE_ESCALATION_SPIKE": itype = "Privilege Escalation Attempt"
-    elif state.pattern_name == "CREDENTIAL_HARVESTING": itype = "Credential Harvesting Campaign"
-    elif state.pattern_name == "DEFENSE_EVASION_CHAIN": itype = "Defense Evasion Campaign"
-    elif state.pattern_name == "DATA_STAGING": itype = "Data Staging & Exfiltration"
-    elif state.pattern_name == "RECON_TO_EXPLOIT": itype = "Reconnaissance to Exploitation"
-    elif state.pattern_name == "C2_COMMUNICATION": itype = "Command & Control Communication"
-    elif actual_depth == 0: itype = "Single Session Activity"
-    elif actual_depth == 1: itype = "Repeated Suspicious Activity"
-    elif actual_depth == 2: itype = "Correlated Attack Campaign"
-    else: itype = "Multi-Stage Attack"
+    final_evidence = evidence_aggregator.get_accumulated_evidence()
+    decision = decision_engine.decide(final_evidence)
 
-    why_flagged = [ev["description"] for ev in state.evidence_board]
-    if not why_flagged: why_flagged = ["Session recorded for baseline monitoring"]
+    reasoning_trace.append(
+        ReasoningStep(
+            len(reasoning_trace) + 1,
+            "decide",
+            f"Deterministic decision: Severity={decision.severity}, "
+            f"Confidence={decision.confidence:.1%}, "
+            f"Risk={decision.risk_score}/100, "
+            f"Action={decision.recommended_action}. "
+            f"Factors: {', '.join(decision.severity_factors)}",
+            duration_ms=(time.time() - step_start) * 1000,
+        ).to_dict()
+    )
 
-    reasoning_trace.append(ReasoningStep(
-        7, "decide", f"Deterministic Decision completed. Severity={severity}, Confidence={confidence:.1%}, Decision={decision}, Risk={risk_score}/100",
-        duration_ms=(time.time()-step7_start)*1000
-    ).to_dict())
+    # ══════════════════════════════════════════════════════════════════════
+    # PHASE 8: REPORT GENERATION
+    # ══════════════════════════════════════════════════════════════════════
+    step_start = time.time()
 
-    # ── PHASE 8: EXPLAIN ───────────────────────────────────────────────────
-    step8_start = time.time()
-    
-    timeline = []
-    sessions_to_map = suspicious_sessions if state.correlation_depth > 1 else [current_record]
+    # Build timeline
+    timeline: List[Dict[str, Any]] = []
+    sessions_to_map = (
+        suspicious_sessions
+        if evidence_aggregator.correlation_depth > 1
+        else [current_record]
+    )
     for sess in sessions_to_map:
         for evt in sess.events_summary:
-            timeline.append({
-                "timestamp": evt.get("timestamp") or sess.timestamp or "",
-                "entity_id": sess.entity_id,
-                "event_type": evt.get("event_type", "UNKNOWN"),
-                "description": evt.get("description", ""),
-                "session_anomaly_score": sess.anomaly_score,
-                "session_id": sess.session_id,
-            })
+            timeline.append(
+                {
+                    "timestamp": evt.get("timestamp") or sess.timestamp or "",
+                    "entity_id": sess.entity_id,
+                    "event_type": evt.get("event_type", "UNKNOWN"),
+                    "description": evt.get("description", ""),
+                    "session_anomaly_score": sess.anomaly_score,
+                    "session_id": sess.session_id,
+                }
+            )
     timeline.sort(key=lambda x: x.get("timestamp") or "")
 
-    incident = {
-        "incident_type": itype, "entities": list(dict.fromkeys([entity_id] + [s.entity_id for s in sessions_to_map])),
-        "severity": severity, "confidence": confidence, "decision": decision,
-        "correlation_depth": state.correlation_depth,
-        "campaign_pattern": state.pattern_name, "compound_anomaly_score": state.compound_anomaly_score,
-        "compound_mitre_mappings": state.compound_mitre_mappings,
-    }
-    
-    try:
-        from backend.reasoning.llm_agent import generate_inference
-        timeline_str = ""
-        for i, e in enumerate(timeline[:15], 1):
-            timeline_str += f"  {i}. [{e.get('timestamp','N/A')}] {e['event_type']} — {e.get('description','N/A')}\n"
-        prompt = f"You are a SOC Agent writing a final explanation. INCIDENT: {itype} | Severity: {severity} | Confidence: {confidence:.1%} | Decision: {decision}\nTIMELINE:\n{timeline_str}\nWrite 3-4 sentences. Return JSON: {{\"narrative\":\"...\"}}"
-        raw = generate_inference(prompt)
-        parsed = None
-        try: parsed = json.loads(raw)
-        except json.JSONDecodeError:
-            fenced = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', raw, re.DOTALL)
-            if fenced:
-                try: parsed = json.loads(fenced.group(1))
-                except: pass
-        llm_explanation = parsed.get("narrative", raw[:1500]) if parsed else raw[:1500]
-    except:
-        llm_explanation = f"Detected {itype}. Severity: {severity}. Decision: {decision}."
+    # Generate the LLM report
+    report = generate_investigation_report(
+        decision=decision.to_dict(),
+        evidence_summary=final_evidence.to_planner_summary(),
+        timeline=timeline,
+        plan_history=plan_history,
+        hypothesis=current_hypothesis,
+    )
 
-    playbook_result = run_playbook_tool(itype, severity, state.investigation_hypothesis, state.pattern_name)
-    tool_results_all.append(playbook_result.to_dict())
-    playbook_data = playbook_result.output if playbook_result.status == "success" else {}
+    # Generate response playbook
+    playbook_result = run_playbook_tool(
+        decision.incident_type,
+        decision.severity,
+        current_hypothesis,
+        final_evidence.pattern_name,
+    )
+    playbook_data = (
+        playbook_result.output
+        if playbook_result.status == "success"
+        else {}
+    )
 
-    reasoning_trace.append(ReasoningStep(
-        8, "explain", f"Generated human-readable explanation and response playbook",
-        duration_ms=(time.time()-step8_start)*1000
-    ).to_dict())
+    # Build evidence board
+    evidence_board = [e.to_dict() for e in evidence_aggregator._evidence_items]
+    why_flagged = [ev["description"] for ev in evidence_board]
+    if not why_flagged:
+        why_flagged = ["Session recorded for baseline monitoring"]
+
+    reasoning_trace.append(
+        ReasoningStep(
+            len(reasoning_trace) + 1,
+            "report",
+            "Generated investigation report and response playbook.",
+            duration_ms=(time.time() - step_start) * 1000,
+        ).to_dict()
+    )
 
     total_ms = (time.time() - t_start) * 1000
 
-    # ── RETURN ENHANCED STATE ──────────────────────────────────────────────
-    return {
-        # Core original schema 
-        "anomaly_score": state.lstm_score,
-        "compound_anomaly_score": state.compound_anomaly_score,
-        "mitre_mappings": state.mitre_mappings,
-        "compound_mitre_mappings": state.compound_mitre_mappings,
-        "correlated_timeline": timeline,
-        "incident_type": itype,
-        "severity": severity,
-        "confidence": confidence,
-        "decision": decision,
-        "risk_score": risk_score,
-        "why_flagged": why_flagged,
-        "correlation_depth": state.correlation_depth,
-        "campaign_pattern": state.pattern_name,
-        "entities": incident["entities"],
-        "llm_explanation": llm_explanation,
-        "incident_id": session_id,
-        
-        # New Enterprise Agent Console State
-        "investigation_status": "COMPLETED",
-        "suspicion_level": state.suspicion_level,
-        "investigation_hypothesis": state.investigation_hypothesis,
-        "planned_tools": state.planned_tools,
-        "completed_tools": state.completed_tools,
-        "skipped_tools": state.skipped_tools,
-        "escalation_tools": state.escalation_tools,
-        "evidence_board": state.evidence_board,
+    # ══════════════════════════════════════════════════════════════════════
+    # RETURN FULL INVESTIGATION STATE
+    # ══════════════════════════════════════════════════════════════════════
+    ioc_data = {}
+    for tr in final_evidence.tool_results:
+        if tr.get("tool_name") == "IOC Analyst" and tr.get("status") == "success":
+            ioc_data = tr.get("output", {})
+            break
 
-        # Trace and Results
+    return {
+        # ── Core detection signals ────────────────────────────────────────
+        "anomaly_score": final_evidence.lstm_score,
+        "compound_anomaly_score": final_evidence.compound_anomaly_score,
+        "mitre_mappings": final_evidence.mitre_mappings,
+        "compound_mitre_mappings": final_evidence.compound_mitre_mappings,
+        "correlated_timeline": timeline,
+        "incident_type": decision.incident_type,
+        "severity": decision.severity,
+        "confidence": decision.confidence,
+        "decision": decision.recommended_action,
+        "risk_score": decision.risk_score,
+        "why_flagged": why_flagged,
+        "correlation_depth": final_evidence.correlation_depth,
+        "campaign_pattern": final_evidence.pattern_name,
+        "entities": list(
+            dict.fromkeys(
+                [entity_id]
+                + [s.entity_id for s in sessions_to_map]
+            )
+        ),
+        "llm_explanation": report.full_narrative,
+        "incident_id": session_id,
+        # ── Investigation console state ───────────────────────────────────
+        "investigation_status": "COMPLETED",
+        "suspicion_level": (
+            "CRITICAL"
+            if decision.severity in ("CRITICAL", "HIGH")
+            else "MEDIUM"
+            if decision.severity == "MEDIUM"
+            else "LOW"
+        ),
+        "investigation_hypothesis": current_hypothesis,
+        "planned_tools": plan_history[0].get("tool_sequence", []) if plan_history else [],
+        "completed_tools": final_evidence.completed_tools,
+        "skipped_tools": [
+            t
+            for t in [
+                "Behavior Analyst",
+                "Pattern Analyst",
+                "Threat Context",
+                "IOC Analyst",
+                "MITRE Knowledge",
+            ]
+            if t not in final_evidence.completed_tools
+        ],
+        "escalation_tools": [
+            t
+            for plan in plan_history[1:]
+            for t in plan.get("tool_sequence", [])
+        ],
+        "evidence_board": evidence_board,
+        # ── Reasoning trace ───────────────────────────────────────────────
         "reasoning_trace": reasoning_trace,
-        "tool_results": tool_results_all,
-        "iocs_extracted": ioc_data if 'ioc_data' in locals() else {},
+        "tool_results": final_evidence.tool_results,
+        "iocs_extracted": ioc_data,
         "response_playbook": playbook_data,
         "total_analysis_ms": round(total_ms, 1),
+        # ── NEW: Agentic investigation fields ─────────────────────────────
+        "reflection_history": reflection_history,
+        "replan_events": replan_events,
+        "confidence_evolution": final_evidence.confidence_evolution,
+        "planner_thoughts": planner_thoughts,
+        "investigation_phases": reasoning_trace,
+        "investigation_report": report.to_dict(),
+        "plan_iterations": iteration,
+        "plan_history": plan_history,
+        # ── Decision transparency ─────────────────────────────────────────
+        "confidence_breakdown": decision.confidence_breakdown,
+        "risk_breakdown": decision.risk_breakdown,
+        "severity_factors": decision.severity_factors,
     }

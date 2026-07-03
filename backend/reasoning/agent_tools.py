@@ -338,3 +338,145 @@ def run_playbook_tool(
             error_message=str(e),
             execution_time_ms=(time.time() - t0) * 1000,
         )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TOOL REGISTRY & ORCHESTRATOR
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Maps planner-facing tool names to executor functions
+TOOL_REGISTRY: Dict[str, Callable] = {
+    "Behavior Analyst": run_anomaly_score_tool,
+    "Pattern Analyst": run_pattern_match_tool,
+    "Threat Context": run_threat_intel_tool,
+    "IOC Analyst": run_ioc_extractor_tool,
+    "MITRE Knowledge": run_rag_lookup_tool,
+}
+
+# Tools that can run independently in parallel
+PARALLEL_GROUPS = [
+    {"Behavior Analyst", "Pattern Analyst"},  # Group 1: independent
+    {"Threat Context", "IOC Analyst"},         # Group 2: independent
+    {"MITRE Knowledge"},                       # Group 3: may depend on patterns
+]
+
+
+def execute_tools(
+    approved_tools: List[str],
+    raw_events: list,
+    raw_logs: str = "",
+    event_sequence: Optional[List[int]] = None,
+    anomaly_score: Optional[float] = None,
+) -> List[ToolResult]:
+    """
+    Execute approved specialist tools from a validated plan.
+
+    Dispatches tools based on the TOOL_REGISTRY.  Independent tools
+    run in parallel via concurrent.futures.  Failed tools are logged
+    and skipped — the investigation continues with remaining tools.
+
+    Args:
+        approved_tools: List of tool names from ValidatedPlan.approved_tools
+        raw_events: SecurityEvent objects for specialist analysis
+        raw_logs: Raw log text for IOC extraction
+        event_sequence: Integer-encoded event sequence for LSTM
+        anomaly_score: Pre-computed anomaly score (if available)
+
+    Returns:
+        List of ToolResult objects (one per tool, including errors)
+    """
+    import concurrent.futures
+
+    results: List[ToolResult] = []
+    tools_to_run = [t for t in approved_tools if t in TOOL_REGISTRY]
+
+    if not tools_to_run:
+        logger.warning("No valid tools to execute from approved list")
+        return results
+
+    def _run_single_tool(tool_name: str) -> ToolResult:
+        """Execute a single tool with error recovery."""
+        try:
+            if tool_name == "Behavior Analyst":
+                seq = event_sequence or []
+                res = run_anomaly_score_tool(seq, anomaly_score)
+            elif tool_name == "Pattern Analyst":
+                res = run_pattern_match_tool(raw_events)
+            elif tool_name == "Threat Context":
+                res = run_threat_intel_tool(raw_events)
+            elif tool_name == "IOC Analyst":
+                res = run_ioc_extractor_tool(raw_logs)
+            elif tool_name == "MITRE Knowledge":
+                res = run_rag_lookup_tool(raw_events)
+            else:
+                res = ToolResult(
+                    tool_name=tool_name,
+                    status="error",
+                    error_message=f"Unknown tool: {tool_name}",
+                )
+
+            # Set the display name
+            res.tool_name = tool_name
+            return res
+
+        except Exception as e:
+            logger.error(f"Tool '{tool_name}' failed with exception: {e}")
+            return ToolResult(
+                tool_name=tool_name,
+                status="error",
+                error_message=f"Unhandled exception: {e}",
+            )
+
+    # Execute tools — parallel where possible
+    # Group tools by parallel eligibility
+    parallel_batch: List[str] = []
+    sequential: List[str] = []
+
+    for tool in tools_to_run:
+        # Check if tool can be parallelized with others in the batch
+        can_parallel = False
+        for group in PARALLEL_GROUPS:
+            if tool in group and all(t in group for t in parallel_batch):
+                can_parallel = True
+                break
+        if can_parallel or not parallel_batch:
+            parallel_batch.append(tool)
+        else:
+            sequential.append(tool)
+
+    # Run parallel batch
+    if len(parallel_batch) > 1:
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=min(len(parallel_batch), 4)
+        ) as executor:
+            future_map = {
+                executor.submit(_run_single_tool, t): t
+                for t in parallel_batch
+            }
+            for future in concurrent.futures.as_completed(future_map):
+                try:
+                    result = future.result(timeout=300.0)
+                    results.append(result)
+                except Exception as e:
+                    tool_name = future_map[future]
+                    logger.error(f"Parallel tool '{tool_name}' failed: {e}")
+                    results.append(ToolResult(
+                        tool_name=tool_name,
+                        status="error",
+                        error_message=str(e),
+                    ))
+    else:
+        for tool in parallel_batch:
+            results.append(_run_single_tool(tool))
+
+    # Run sequential tools
+    for tool in sequential:
+        results.append(_run_single_tool(tool))
+
+    logger.info(
+        f"Executed {len(results)} tools: "
+        f"{sum(1 for r in results if r.status == 'success')} success, "
+        f"{sum(1 for r in results if r.status == 'error')} errors"
+    )
+
+    return results

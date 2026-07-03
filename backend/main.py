@@ -91,17 +91,26 @@ async def add_private_network_header(request: Request, call_next):
 def health_check():
     return {
         "status": "SOC Analyst API running",
-        "version": "7.0.0",
-        "architecture": "Agent-Oriented AI Investigation System",
-        "orchestration_phases": [
-            "OBSERVE", "THINK", "PLAN", "EXECUTE",
-            "EVALUATE", "FUSE", "DECIDE", "EXPLAIN"
+        "version": "8.0.0",
+        "architecture": "Hybrid Agentic AI SOC Investigation Platform",
+        "investigation_phases": [
+            "PERCEIVE", "PLAN", "EXECUTE",
+            "REFLECT", "REPLAN", "VALIDATE", "REPORT"
         ],
         "specialists": [
             "Behavior Analyst", "Pattern Analyst",
             "Threat Context", "IOC Analyst", "MITRE Knowledge"
         ],
         "agent_entities_tracked": len(get_memory_store().get_all_entities()),
+        "features": [
+            "LLM Investigation Planner",
+            "Dynamic Reflection & Replanning",
+            "Deterministic Decision Engine",
+            "Policy & Guardrail Engine",
+            "Prompt Injection Defense",
+            "Evidence Aggregation",
+            "Cross-session Correlation",
+        ],
     }
 
 
@@ -122,16 +131,19 @@ def dashboard_stats():
         total_sessions += len(memory.get_sessions(eid))
 
     return {
-        "version": "7.0.0",
+        "version": "8.0.0",
         "status": "operational",
         "components": {
             "lstm_model": "loaded",
             "rag_chromadb": "loaded",
             "llm_api": os.getenv("OPENROUTER_MODEL", "openai/gpt-oss-120b:free"),
-            "agent_engine": "orchestrator_v7",
+            "agent_engine": "hybrid_agentic_v8",
             "jwt_auth": "enabled",
+            "policy_engine": "enabled",
+            "reflection_engine": "enabled",
+            "decision_engine": "deterministic",
         },
-        "orchestration_phases": 8,
+        "investigation_phases": 7,
         "specialist_count": 5,
         "campaign_patterns": 7,
         "attack_event_types": 10,

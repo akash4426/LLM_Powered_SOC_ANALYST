@@ -103,14 +103,13 @@ export const SEVERITY_COLORS = {
 };
 
 export const AGENT_PHASES = [
-  { id: 0, label: 'OBSERVE',  desc: 'Collect facts & build session', icon: '01' },
-  { id: 1, label: 'THINK',    desc: 'Deterministic suspicion assessment', icon: '02' },
-  { id: 2, label: 'PLAN',     desc: 'Dynamic tool selection', icon: '03' },
-  { id: 3, label: 'EXECUTE',  desc: 'Invoke selected specialists', icon: '04' },
-  { id: 4, label: 'EVALUATE', desc: 'Assess evidence & escalate', icon: '05' },
-  { id: 5, label: 'FUSE',     desc: 'Merge cross-session memory', icon: '06' },
-  { id: 6, label: 'DECIDE',   desc: 'Compute severity & risk score', icon: '07' },
-  { id: 7, label: 'EXPLAIN',  desc: 'Generate LLM narrative & playbook', icon: '08' },
+  { id: 0, label: 'PERCEIVE', desc: 'Normalize logs & extract events', icon: '01' },
+  { id: 1, label: 'PLAN',     desc: 'LLM generates investigation strategy', icon: '02' },
+  { id: 2, label: 'EXECUTE',  desc: 'Run specialist tools', icon: '03' },
+  { id: 3, label: 'REFLECT',  desc: 'Evaluate evidence & hypothesis', icon: '04' },
+  { id: 4, label: 'REPLAN',   desc: 'Dynamic replanning if needed', icon: '05' },
+  { id: 5, label: 'VALIDATE', desc: 'Deterministic decision engine', icon: '06' },
+  { id: 6, label: 'REPORT',   desc: 'Generate investigation report', icon: '07' },
 ];
 
 export const SPECIALISTS = [

@@ -317,12 +317,14 @@ def generate_inference(prompt: str) -> str:
     from openai import OpenAI
     
     # Allows falling back to user's OpenRouter or standard OpenAI API based on env configuration
-    api_key = os.getenv("OPEN_ROUTER_API") or os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY")
+    api_key = os.getenv("OPEN_ROUTER_API") or os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY") or "ollama"
     if not api_key:
-        raise RuntimeError("No OpenRouter Key found in environment variables.")
+        raise RuntimeError("No API Key found in environment variables.")
+
+    base_url = os.getenv("OPENAI_BASE_URL", "https://openrouter.ai/api/v1")
 
     client = OpenAI(
-        base_url="https://openrouter.ai/api/v1",
+        base_url=base_url,
         api_key=api_key,
     )
 

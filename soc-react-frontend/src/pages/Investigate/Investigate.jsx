@@ -96,8 +96,8 @@ export default function Investigate() {
     setPipeStep(0);
     startRef.current = Date.now();
 
-    const stepCount = 8;
-    addFeed('feedCyan', 'Starting investigation…');
+    const stepCount = 7;
+    addFeed('feedCyan', 'Starting agentic investigation…');
     animatePipeline(stepCount);
 
     try {
@@ -202,19 +202,21 @@ export default function Investigate() {
           </div>
         </div>
 
-        {/* Agent Specialists */}
+        {/* Agent Architecture */}
         <div className={styles.module}>
           <div className={styles.moduleHeader}>
-            <span className={styles.moduleLabel}>ORCHESTRATOR SPECIALISTS</span>
+            <span className={styles.moduleLabel}>AGENTIC ARCHITECTURE</span>
           </div>
           <div className={styles.stackTable}>
             {[
-              ['BEHAVIOR', 'LSTM behavioral scoring'],
+              ['PLANNER', 'LLM investigation strategy'],
+              ['BEHAVIOR', 'LSTM anomaly detection'],
               ['PATTERN', 'Heuristic attack patterns'],
               ['THREAT CTX', 'IP/hash reputation'],
               ['IOC ANALYST', 'Automated extraction'],
               ['MITRE RAG', 'ATT&CK semantic search'],
-              ['ORCHESTRATOR', 'ReAct cross-session agent'],
+              ['REFLECTION', 'Evidence evaluation loop'],
+              ['DECISION', 'Deterministic engine'],
             ].map(([k, v]) => (
               <div className={styles.stackRow} key={k}>
                 <span className={styles.stackKey}>{k}</span>

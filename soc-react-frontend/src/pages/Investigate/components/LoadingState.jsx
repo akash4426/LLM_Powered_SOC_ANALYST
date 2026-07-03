@@ -26,8 +26,8 @@ export default function LoadingState({ pipeStep, startTime }) {
           <div className={styles.spinnerCore} />
         </div>
         <div>
-          <div className={styles.title}>AGENT ORCHESTRATION IN PROGRESS</div>
-          <div className={styles.sub}>Autonomous analyst investigating session events</div>
+          <div className={styles.title}>AGENTIC INVESTIGATION IN PROGRESS</div>
+          <div className={styles.sub}>Autonomous planner orchestrating specialist analysis</div>
         </div>
       </div>
 

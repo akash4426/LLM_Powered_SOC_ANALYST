@@ -160,3 +160,16 @@ class AgentAnalysisResponse(BaseModel):
 
     # Original pipeline report (full InvestigateResponse data)
     pipeline_report: Optional[Dict[str, Any]] = None
+
+    # ── NEW: Agentic Investigation Platform fields ──
+    reflection_history: List[Dict[str, Any]] = Field(default_factory=list)
+    replan_events: List[Dict[str, Any]] = Field(default_factory=list)
+    confidence_evolution: List[float] = Field(default_factory=list)
+    planner_thoughts: List[str] = Field(default_factory=list)
+    investigation_phases: List[Dict[str, Any]] = Field(default_factory=list)
+    investigation_report: Dict[str, Any] = Field(default_factory=dict)
+    plan_iterations: int = 1
+    plan_history: List[Dict[str, Any]] = Field(default_factory=list)
+    confidence_breakdown: Dict[str, float] = Field(default_factory=dict)
+    risk_breakdown: Dict[str, float] = Field(default_factory=dict)
+    severity_factors: List[str] = Field(default_factory=list)
