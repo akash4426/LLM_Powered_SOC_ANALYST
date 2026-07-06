@@ -314,11 +314,11 @@ def validate_llm_output(
 
 def generate_inference(prompt: str) -> str:
     """
-    Execute LLM inference with automatic Gemini fallback.
+    Execute LLM inference.
 
     Priority order:
-      1. Primary LLM via OpenAI-compatible API (Ollama / OpenRouter)
-      2. Google Gemini (gemini-1.5-flash) — if primary fails AND GEMINI_API_KEY is set
+      1. Google Gemini (primary) — if GEMINI_API_KEY is set
+      2. OpenAI-compatible API (fallback)
     """
     from openai import OpenAI
     from backend.reasoning.gemini_agent import generate_gemini_inference, is_gemini_available
@@ -333,7 +333,22 @@ def generate_inference(prompt: str) -> str:
 
     primary_error: Optional[Exception] = None
 
-    # ── Attempt 1: Primary LLM ────────────────────────────────────────────────
+    # ── Attempt 1: Gemini Primary ─────────────────────────────────────────────
+    if is_gemini_available():
+        try:
+            logger.info("[Gemini] Using Gemini as primary LLM.")
+            return generate_gemini_inference(prompt)
+        except Exception as gemini_err:
+            primary_error = gemini_err
+            logger.warning(
+                f"[Gemini] Primary failed: {gemini_err}. "
+                "Attempting fallback…"
+            )
+    else:
+        primary_error = RuntimeError("GEMINI_API_KEY not set.")
+        logger.warning("[Gemini] Not available, attempting fallback LLM.")
+
+    # ── Attempt 2: Fallback LLM ────────────────────────────────────────────────
     try:
         client = OpenAI(base_url=base_url, api_key=api_key)
         response = client.chat.completions.create(
@@ -346,51 +361,29 @@ def generate_inference(prompt: str) -> str:
         # Handle dict-style responses (some Ollama versions return dicts)
         if isinstance(response, dict):
             if "error" in response:
-                raise RuntimeError(f"Primary API Error: {response['error']}")
+                raise RuntimeError(f"Fallback API Error: {response['error']}")
             choices = response.get("choices")
             if not choices:
-                raise RuntimeError(f"No choices in primary response: {response}")
+                raise RuntimeError(f"No choices in fallback response: {response}")
             return choices[0]["message"]["content"].strip()
 
         if not getattr(response, "choices", None):
-            raise RuntimeError(f"No choices in primary response: {response}")
+            raise RuntimeError(f"No choices in fallback response: {response}")
 
         text = response.choices[0].message.content
         if not text or not text.strip():
-            raise RuntimeError("Primary LLM returned empty content.")
+            raise RuntimeError("Fallback LLM returned empty content.")
 
-        logger.info(f"[Primary LLM] Inference succeeded via {base_url}")
+        logger.info(f"[Fallback LLM] Inference succeeded via {base_url}")
         return text.strip()
 
     except Exception as e:
-        primary_error = e
-        logger.warning(
-            f"[Primary LLM] Failed ({base_url}, model={MODEL_NAME}): {e}. "
-            "Attempting Gemini fallback…"
-        )
-
-    # ── Attempt 2: Gemini Fallback ────────────────────────────────────────────
-    if is_gemini_available():
-        try:
-            logger.info("[Gemini] Using gemini-1.5-flash as fallback LLM.")
-            return generate_gemini_inference(prompt)
-        except Exception as gemini_err:
-            logger.error(f"[Gemini] Fallback also failed: {gemini_err}")
-            raise RuntimeError(
-                f"Both primary LLM and Gemini fallback failed.\n"
-                f"  Primary error : {primary_error}\n"
-                f"  Gemini error  : {gemini_err}"
-            ) from gemini_err
-    else:
-        logger.warning(
-            "[Gemini] Fallback skipped — GEMINI_API_KEY not set or "
-            "google-generativeai not installed."
-        )
+        logger.error(f"[Fallback LLM] Failed: {e}")
         raise RuntimeError(
-            f"Primary LLM failed and Gemini fallback is not configured.\n"
-            f"Primary error: {primary_error}\n"
-            f"To enable Gemini fallback, add GEMINI_API_KEY to your .env file."
-        ) from primary_error
+            f"Both primary Gemini and fallback LLM failed.\n"
+            f"  Primary error: {primary_error}\n"
+            f"  Fallback error: {e}"
+        ) from e
 
 def build_optimized_prompt(log_text: str, event_sequence: List[str], anomaly_score: float, threat_intel: str, rag_context: str) -> str:
     """

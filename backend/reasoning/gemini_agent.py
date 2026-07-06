@@ -20,7 +20,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-_GEMINI_MODEL = "gemini-2.0-flash"
+_GEMINI_MODEL = "gemini-2.5-flash"
 
 
 def _get_client():
@@ -70,7 +70,8 @@ def generate_gemini_inference(prompt: str) -> str:
             contents=prompt,
             config=types.GenerateContentConfig(
                 temperature=0.3,
-                max_output_tokens=800,
+                max_output_tokens=2000,
+                response_mime_type="application/json",
             ),
         )
 
