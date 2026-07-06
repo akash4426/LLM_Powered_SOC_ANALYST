@@ -266,7 +266,7 @@ export default function Investigate() {
         {status === 'idle' && <EmptyState />}
         {status === 'loading' && <LoadingState pipeStep={pipeStep} startTime={startRef.current} />}
         {status === 'success' && result && (
-          <InvestigationConsole data={result} />
+          <InvestigationConsole data={result} onBack={() => { setStatus('idle'); setResult(null); }} />
         )}
         {status === 'error' && (
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 12 }}>

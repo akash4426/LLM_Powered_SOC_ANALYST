@@ -1,42 +1,186 @@
-/* src/pages/Investigate/components/EmptyState.module.css */
+/* EmptyState.module.css */
+
 .container {
   flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 20px;
+  gap: 28px;
   padding: 40px;
   animation: fadeIn 0.4s ease both;
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
-.art {
-  font-family: var(--font-mono);
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--text-3);
-  text-align: left;
+/* ── Orbital rings ── */
+.orbitalWrap {
+  position: relative;
+  width: 160px;
+  height: 160px;
+  flex-shrink: 0;
 }
 
-.icons {
+.orbCenter {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: rgba(0,212,255,0.06);
+  border: 1px solid rgba(0,212,255,0.15);
   display: flex;
-  gap: 10px;
-  opacity: 0.4;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 24px rgba(0,212,255,0.12);
+  animation: orbPulse 3s ease-in-out infinite;
 }
 
-.hint {
-  font-size: 13px;
-  color: var(--text-3);
+@keyframes orbPulse {
+  0%, 100% { box-shadow: 0 0 20px rgba(0,212,255,0.1); }
+  50% { box-shadow: 0 0 40px rgba(0,212,255,0.25); }
+}
+
+.orbRing1, .orbRing2, .orbRing3 {
+  position: absolute;
+  border-radius: 50%;
+  border: 1px solid transparent;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.orbRing1 {
+  width: 90px;
+  height: 90px;
+  border-color: rgba(0,212,255,0.2);
+  animation: orbSpin 8s linear infinite;
+}
+
+.orbRing2 {
+  width: 126px;
+  height: 126px;
+  border-color: rgba(68,136,255,0.14);
+  border-style: dashed;
+  animation: orbSpin 14s linear infinite reverse;
+}
+
+.orbRing3 {
+  width: 158px;
+  height: 158px;
+  border-color: rgba(170,102,255,0.1);
+  animation: orbSpin 20s linear infinite;
+}
+
+@keyframes orbSpin { to { transform: translate(-50%, -50%) rotate(360deg); } }
+
+.orbIcon1, .orbIcon2, .orbIcon3 {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--bg-3);
+  border: 1px solid var(--border-1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.orbIcon1 { top: 4px; left: 50%; transform: translateX(-50%); }
+.orbIcon2 { bottom: 10px; right: 10px; }
+.orbIcon3 { bottom: 10px; left: 10px; }
+
+/* ── Text block ── */
+.textBlock {
   text-align: center;
-  max-width: 420px;
-  line-height: 1.6;
 }
 
-.hint strong {
+.title {
+  font-family: var(--font-mono);
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  color: var(--text-0);
+  margin-bottom: 8px;
+}
+
+.sub {
+  font-size: 12px;
+  color: var(--text-3);
+  max-width: 320px;
+  line-height: 1.6;
+  margin: 0 auto;
+}
+
+/* ── Status list ── */
+.statusList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 260px;
+}
+
+.statusRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: rgba(255,255,255,0.015);
+  border: 1px solid rgba(255,255,255,0.04);
+  border-radius: var(--radius-sm);
+}
+
+.statusDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  animation: pulse 2s ease infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.statusLabel {
+  font-family: var(--font-mono);
+  font-size: 10px;
   color: var(--text-2);
+  flex: 1;
+}
+
+.statusVal {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+/* ── Hint ── */
+.hint {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  color: var(--text-3);
+  line-height: 1.5;
+  text-align: center;
+  max-width: 340px;
+}
+
+kbd {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  padding: 2px 6px;
+  border: 1px solid var(--border-2);
+  border-radius: 3px;
+  background: var(--bg-3);
+  color: var(--cyan);
+  letter-spacing: 0.05em;
 }

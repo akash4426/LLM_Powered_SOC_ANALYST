@@ -313,45 +313,84 @@ def validate_llm_output(
 # ── Inference Function ───────────────────────────────────────────────────────
 
 def generate_inference(prompt: str) -> str:
-    """Executes OpenRouter inference using OpenAI Client."""
-    from openai import OpenAI
-    
-    # Allows falling back to user's OpenRouter or standard OpenAI API based on env configuration
-    api_key = os.getenv("OPEN_ROUTER_API") or os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY") or "ollama"
-    if not api_key:
-        raise RuntimeError("No API Key found in environment variables.")
+    """
+    Execute LLM inference with automatic Gemini fallback.
 
+    Priority order:
+      1. Primary LLM via OpenAI-compatible API (Ollama / OpenRouter)
+      2. Google Gemini (gemini-1.5-flash) — if primary fails AND GEMINI_API_KEY is set
+    """
+    from openai import OpenAI
+    from backend.reasoning.gemini_agent import generate_gemini_inference, is_gemini_available
+
+    api_key = (
+        os.getenv("OPEN_ROUTER_API")
+        or os.getenv("OPENROUTER_API_KEY")
+        or os.getenv("OPENAI_API_KEY")
+        or "ollama"
+    )
     base_url = os.getenv("OPENAI_BASE_URL", "https://openrouter.ai/api/v1")
 
-    client = OpenAI(
-        base_url=base_url,
-        api_key=api_key,
-    )
+    primary_error: Optional[Exception] = None
 
+    # ── Attempt 1: Primary LLM ────────────────────────────────────────────────
     try:
+        client = OpenAI(base_url=base_url, api_key=api_key)
         response = client.chat.completions.create(
             model=MODEL_NAME,
             messages=[{"role": "user", "content": prompt}],
             max_tokens=600,
-            temperature=0.3
+            temperature=0.3,
         )
-        
-        # Handle cases where response might be a dictionary or missing choices
+
+        # Handle dict-style responses (some Ollama versions return dicts)
         if isinstance(response, dict):
             if "error" in response:
-                raise RuntimeError(f"API Error: {response['error']}")
+                raise RuntimeError(f"Primary API Error: {response['error']}")
             choices = response.get("choices")
             if not choices:
-                raise RuntimeError(f"No choices in response: {response}")
+                raise RuntimeError(f"No choices in primary response: {response}")
             return choices[0]["message"]["content"].strip()
-            
+
         if not getattr(response, "choices", None):
-            raise RuntimeError(f"No choices in response: {response}")
-            
-        return response.choices[0].message.content.strip()
+            raise RuntimeError(f"No choices in primary response: {response}")
+
+        text = response.choices[0].message.content
+        if not text or not text.strip():
+            raise RuntimeError("Primary LLM returned empty content.")
+
+        logger.info(f"[Primary LLM] Inference succeeded via {base_url}")
+        return text.strip()
+
     except Exception as e:
-        logger.error(f"OpenRouter API failed: {e}")
-        raise RuntimeError(f"OpenRouter generation failed: {e}")
+        primary_error = e
+        logger.warning(
+            f"[Primary LLM] Failed ({base_url}, model={MODEL_NAME}): {e}. "
+            "Attempting Gemini fallback…"
+        )
+
+    # ── Attempt 2: Gemini Fallback ────────────────────────────────────────────
+    if is_gemini_available():
+        try:
+            logger.info("[Gemini] Using gemini-1.5-flash as fallback LLM.")
+            return generate_gemini_inference(prompt)
+        except Exception as gemini_err:
+            logger.error(f"[Gemini] Fallback also failed: {gemini_err}")
+            raise RuntimeError(
+                f"Both primary LLM and Gemini fallback failed.\n"
+                f"  Primary error : {primary_error}\n"
+                f"  Gemini error  : {gemini_err}"
+            ) from gemini_err
+    else:
+        logger.warning(
+            "[Gemini] Fallback skipped — GEMINI_API_KEY not set or "
+            "google-generativeai not installed."
+        )
+        raise RuntimeError(
+            f"Primary LLM failed and Gemini fallback is not configured.\n"
+            f"Primary error: {primary_error}\n"
+            f"To enable Gemini fallback, add GEMINI_API_KEY to your .env file."
+        ) from primary_error
 
 def build_optimized_prompt(log_text: str, event_sequence: List[str], anomaly_score: float, threat_intel: str, rag_context: str) -> str:
     """

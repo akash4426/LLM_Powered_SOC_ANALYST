@@ -1,7 +1,7 @@
 // src/components/Topbar/Topbar.jsx
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { Shield, Zap, LayoutDashboard, Search, Database, BarChart2, LogOut } from 'lucide-react';
+import { Shield, LayoutDashboard, Search, Database, BarChart2, LogOut, Cpu } from 'lucide-react';
 import styles from './Topbar.module.css';
 
 const NAV_ITEMS = [
@@ -10,6 +10,37 @@ const NAV_ITEMS = [
   { id: 'ragtest',     label: 'RAG TEST',     icon: Database },
   { id: 'evaluate',   label: 'EVALUATE',     icon: BarChart2 },
 ];
+
+function LlmChip() {
+  const baseUrl = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+  const [model, setModel] = useState(null);
+
+  useEffect(() => {
+    // Fetch model info from /health endpoint
+    fetch(`${baseUrl}/health`)
+      .then(r => r.json())
+      .then(d => {
+        const m = d.llm_model || d.active_model || null;
+        setModel(m);
+      })
+      .catch(() => {});
+  }, [baseUrl]);
+
+  if (!model) return null;
+
+  const isGemini = model.toLowerCase().includes('gemini');
+  const isOllama = !model.includes('/') && !isGemini;
+  const label = isGemini ? 'GEMINI' : isOllama ? 'OLLAMA' : 'LLM';
+  const color = isGemini ? 'var(--orange)' : isOllama ? 'var(--cyan)' : 'var(--purple)';
+
+  return (
+    <div className={styles.llmChip} style={{ borderColor: `${color}40`, color }}>
+      <Cpu size={9} />
+      <span>{label}</span>
+      <span className={styles.llmModel}>{model.split('/').pop().split(':')[0].slice(0,12)}</span>
+    </div>
+  );
+}
 
 export default function Topbar({ currentPage, onNavigate }) {
   const { apiOnline, user, logout } = useAuth();
@@ -35,7 +66,7 @@ export default function Topbar({ currentPage, onNavigate }) {
           <span className={styles.logoText}>SOC_ANALYST</span>
         </div>
         <span className={styles.sep}>|</span>
-        <span className={styles.version}>v5.0 · LSTM+RAG+LLM+ReAct</span>
+        <span className={styles.version}>v5.1 · LSTM+RAG+LLM+ReAct</span>
       </div>
 
       <nav className={styles.nav}>
@@ -52,6 +83,9 @@ export default function Topbar({ currentPage, onNavigate }) {
       </nav>
 
       <div className={styles.right}>
+        {/* LLM Model Indicator */}
+        <LlmChip />
+
         {/* API Status */}
         <div className={`${styles.statusChip} ${apiOnline ? styles.online : styles.offline}`}>
           <span className={styles.statusDot} />

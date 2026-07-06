@@ -89,6 +89,8 @@ async def add_private_network_header(request: Request, call_next):
 # ── Health check ──────────────────────────────────────────────────────────────
 @app.get("/health")
 def health_check():
+    from backend.reasoning.llm_agent import MODEL_NAME
+    from backend.reasoning.gemini_agent import is_gemini_available
     return {
         "status": "SOC Analyst API running",
         "version": "8.0.0",
@@ -102,6 +104,8 @@ def health_check():
             "Threat Context", "IOC Analyst", "MITRE Knowledge"
         ],
         "agent_entities_tracked": len(get_memory_store().get_all_entities()),
+        "llm_model": MODEL_NAME,
+        "gemini_fallback_available": is_gemini_available(),
         "features": [
             "LLM Investigation Planner",
             "Dynamic Reflection & Replanning",
@@ -110,6 +114,7 @@ def health_check():
             "Prompt Injection Defense",
             "Evidence Aggregation",
             "Cross-session Correlation",
+            "Gemini Fallback LLM",
         ],
     }
 
