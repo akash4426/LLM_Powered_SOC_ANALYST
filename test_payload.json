@@ -1,0 +1,3 @@
+{
+  "logs": "2024-01-15 02:00:05 WIN-SRV01 System: Service vssadmin stopped\\n2024-01-15 02:01:10 WIN-SRV01 Process: cmd.exe /c vssadmin.exe Delete Shadows /All /Quiet\\n2024-01-15 02:05:00 WIN-SRV01 Registry: HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run modified\\n2024-01-15 02:10:00 WIN-SRV01 Network: Connection to 185.10.10.10:443"
+}

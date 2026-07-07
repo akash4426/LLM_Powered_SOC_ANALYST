@@ -1,482 +1,336 @@
 """
-agent_tools.py
---------------
-Modular tool registry for the Agentic AI reasoning engine.
+agent_tools.py — Tool Orchestrator and Specialist Tools
+========================================================
 
-Each tool is a self-contained function that:
-  1. Accepts structured input
-  2. Performs a specific analysis
-  3. Returns a ToolResult with output, confidence contribution, and evidence tags
-
-Tools:
-  • anomaly_score   — LSTM anomaly scoring on event sequences
-  • rag_lookup      — MITRE ATT&CK vector DB retrieval
-  • threat_intel    — IP/hash/command threat intelligence enrichment
-  • ioc_extractor   — Automated IOC extraction from raw text
-  • pattern_match   — Heuristic pattern detection
-  • playbook        — Response playbook recommendation
-
-The agent layer invokes these tools in a deterministic pipeline,
-then synthesizes results into a unified evidence ledger.
+Every tool is independent, receives the InvestigationObject, 
+and returns exactly the ToolResult schema.
+The orchestrator executes the ApprovedPlan.
 """
 
 import time
 import re
 import logging
-from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional, Callable
+from typing import List, Dict, Any, Callable
+import concurrent.futures
+
+from backend.schemas.investigation import ToolResult, InvestigationObject
+from backend.reasoning.policy_engine import ApprovedPlan
 
 logger = logging.getLogger(__name__)
 
 
-# ── Tool Result ──────────────────────────────────────────────────────────────
-
-@dataclass
-class ToolResult:
-    """Structured output from a single tool invocation."""
-    tool_name: str
-    status: str = "success"            # "success" | "error" | "skipped"
-    output: Dict[str, Any] = field(default_factory=dict)
-    confidence_contribution: float = 0.0   # how much this tool adds to confidence
-    evidence_tags: List[str] = field(default_factory=list)
-    execution_time_ms: float = 0.0
-    error_message: str = ""
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "tool_name": self.tool_name,
-            "status": self.status,
-            "output": self.output,
-            "confidence_contribution": round(self.confidence_contribution, 4),
-            "evidence_tags": self.evidence_tags,
-            "execution_time_ms": round(self.execution_time_ms, 1),
-            "error_message": self.error_message,
-        }
+def _hydrate_events(inv_obj: InvestigationObject) -> List[Any]:
+    from backend.processing.event_extractor import SecurityEvent
+    return [SecurityEvent(**e) for e in inv_obj.normalized_events]
 
 
-@dataclass
-class ReasoningStep:
-    """A single step in the agent's reasoning trace."""
-    step_number: int
-    phase: str              # "observe", "think", "act", "synthesize", "decide", "explain"
-    description: str
-    tool_results: List[ToolResult] = field(default_factory=list)
-    duration_ms: float = 0.0
+# ── Specialist Tools ────────────────────────────────────────────────────────
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "step_number": self.step_number,
-            "phase": self.phase,
-            "description": self.description,
-            "tool_results": [r.to_dict() for r in self.tool_results],
-            "duration_ms": round(self.duration_ms, 1),
-        }
-
-
-# ── Tool Implementations ────────────────────────────────────────────────────
-
-def run_anomaly_score_tool(sequence: List[int], anomaly_score: Optional[float] = None) -> ToolResult:
-    """
-    Tool 1: LSTM Anomaly Scoring.
-    Uses pre-computed score if available, otherwise runs LSTM.
-    """
+def run_anomaly_score_tool(inv_obj: InvestigationObject) -> ToolResult:
+    """Tool 1: LSTM Anomaly Scoring."""
     t0 = time.time()
     try:
-        if anomaly_score is not None:
-            score = anomaly_score
-        else:
-            from backend.models.lstm_model import score_sequence
-            score = score_sequence(sequence)
-
-        tags = []
-        if score >= 0.8:
-            tags = ["critical_anomaly", "behavioral_deviation"]
-        elif score >= 0.6:
-            tags = ["high_anomaly", "suspicious_behavior"]
-        elif score >= 0.3:
-            tags = ["moderate_anomaly"]
-        else:
-            tags = ["normal_behavior"]
+        from backend.models.lstm_model import score_sequence
+        
+        events = _hydrate_events(inv_obj)
+        # V12 FIX: Filter out NORMAL (code 0) padding events to prevent dilution.
+        # Multi-line logs create many NORMAL fragments that drown out the attack signal.
+        # The LSTM should only see the meaningful event sequence.
+        full_sequence = [e.event_code for e in events]
+        attack_sequence = [c for c in full_sequence if c != 0]
+        
+        # Score the attack-only sequence if we have attack events;
+        # otherwise fall back to the full sequence (which will be all-normal → score 0).
+        sequence = attack_sequence if attack_sequence else full_sequence
+        score = score_sequence(sequence)
 
         return ToolResult(
-            tool_name="anomaly_score",
-            output={
+            tool_name="Behavior Analyst",
+            evidence={
                 "anomaly_score": round(score, 4),
                 "risk_level": "CRITICAL" if score >= 0.8 else "HIGH" if score >= 0.6 else "MEDIUM" if score >= 0.3 else "LOW",
-                "sequence_length": len(sequence),
+                "sequence_length": len(full_sequence),
+                "attack_event_count": len(attack_sequence),
             },
-            confidence_contribution=score * 0.4,  # LSTM contributes 40% to confidence
-            evidence_tags=tags,
-            execution_time_ms=(time.time() - t0) * 1000,
+            confidence=score * 0.4,
+            metadata={"tags": ["behavioral_anomaly"] if score >= 0.6 else []},
+            execution_time=(time.time() - t0) * 1000,
+            provenance="lstm_v1"
         )
     except Exception as e:
         return ToolResult(
-            tool_name="anomaly_score",
-            status="error",
-            error_message=str(e),
-            execution_time_ms=(time.time() - t0) * 1000,
+            tool_name="Behavior Analyst", evidence={"error": str(e)}, confidence=0.0,
+            execution_time=(time.time() - t0) * 1000, provenance="lstm_v1"
         )
 
 
-def run_rag_lookup_tool(events: list, mitre_query: str = "") -> ToolResult:
-    """
-    Tool 2: MITRE ATT&CK RAG Retrieval.
-    Queries the vector DB for relevant attack technique context.
-    """
+def run_rag_lookup_tool(inv_obj: InvestigationObject) -> ToolResult:
+    """Tool 2: MITRE ATT&CK RAG Retrieval."""
     t0 = time.time()
     try:
         from backend.rag.rag_engine import retrieve_context
         from backend.processing.event_extractor import get_mitre_query
 
-        if not mitre_query and events:
-            mitre_query = get_mitre_query(events)
+        events = _hydrate_events(inv_obj)
+        mitre_query = get_mitre_query(events)
 
         if not mitre_query:
             return ToolResult(
-                tool_name="rag_lookup",
-                status="skipped",
-                output={"reason": "No MITRE query could be constructed"},
-                execution_time_ms=(time.time() - t0) * 1000,
+                tool_name="MITRE Knowledge", evidence={"reason": "No query"}, confidence=0.0,
+                execution_time=(time.time() - t0) * 1000, provenance="rag_v1"
             )
 
         rag_context = retrieve_context(mitre_query, k=5)
-        # Extract T-codes from context
         techniques = list(dict.fromkeys(re.findall(r"T\d{4}(?:\.\d{3})?", rag_context)))
-        snippets = [s.strip() for s in rag_context.split("\n\n") if s.strip()]
-
-        tags = []
-        if techniques:
-            tags.append(f"mitre_{len(techniques)}_techniques")
-            tags.extend([f"technique_{t}" for t in techniques[:5]])
 
         return ToolResult(
-            tool_name="rag_lookup",
-            output={
-                "mitre_query": mitre_query,
+            tool_name="MITRE Knowledge",
+            evidence={
                 "techniques_found": techniques,
-                "technique_count": len(techniques),
-                "snippets_retrieved": len(snippets),
-                "rag_context": rag_context[:1000],  # Truncate for response
+                "rag_context": rag_context[:1000],
             },
-            confidence_contribution=min(len(techniques) / 5.0, 1.0) * 0.25,
-            evidence_tags=tags,
-            execution_time_ms=(time.time() - t0) * 1000,
+            confidence=min(len(techniques) / 5.0, 1.0) * 0.25,
+            metadata={"tags": [f"technique_{t}" for t in techniques[:5]]},
+            execution_time=(time.time() - t0) * 1000,
+            provenance="chromadb"
         )
     except Exception as e:
         return ToolResult(
-            tool_name="rag_lookup",
-            status="error",
-            error_message=str(e),
-            execution_time_ms=(time.time() - t0) * 1000,
+            tool_name="MITRE Knowledge", evidence={"error": str(e)}, confidence=0.0,
+            execution_time=(time.time() - t0) * 1000, provenance="chromadb"
         )
 
 
-def run_threat_intel_tool(events: list) -> ToolResult:
-    """
-    Tool 3: Threat Intelligence Enrichment.
-    Checks IPs, hashes, commands against the threat intel database.
-    """
+def run_threat_intel_tool(inv_obj: InvestigationObject) -> ToolResult:
+    """Tool 3: Threat Intelligence Enrichment."""
     t0 = time.time()
     try:
         from backend.processing.threat_intel import enrich_events
-
+        events = _hydrate_events(inv_obj)
         ti_report = enrich_events(events)
         malicious = [i for i in ti_report.indicators if i.is_malicious]
-
-        tags = []
-        if malicious:
-            tags.append(f"ti_{len(malicious)}_malicious")
-            for ind in malicious[:3]:
-                tags.append(f"ti_{ind.indicator_type}_{ind.threat_category or 'unknown'}")
 
         ti_score = ti_report.max_risk_score / 100.0
 
         return ToolResult(
-            tool_name="threat_intel",
-            output={
-                "total_indicators": len(ti_report.indicators),
+            tool_name="Threat Context",
+            evidence={
                 "malicious_count": len(malicious),
                 "max_risk_score": ti_report.max_risk_score,
-                "overall_risk": ti_report.overall_risk,
-                "malicious_indicators": [
-                    {
-                        "indicator": i.indicator,
-                        "type": i.indicator_type,
-                        "category": i.threat_category,
-                        "description": i.threat_description,
-                        "risk_score": i.risk_score,
-                    }
-                    for i in malicious[:10]
-                ],
                 "summary": ti_report.summary_text(),
             },
-            confidence_contribution=ti_score * 0.15,
-            evidence_tags=tags,
-            execution_time_ms=(time.time() - t0) * 1000,
+            confidence=ti_score * 0.15,
+            metadata={"tags": [f"ti_malicious"] if malicious else []},
+            execution_time=(time.time() - t0) * 1000,
+            provenance="ti_module"
         )
     except Exception as e:
         return ToolResult(
-            tool_name="threat_intel",
-            status="error",
-            error_message=str(e),
-            execution_time_ms=(time.time() - t0) * 1000,
+            tool_name="Threat Context", evidence={"error": str(e)}, confidence=0.0,
+            execution_time=(time.time() - t0) * 1000, provenance="ti_module"
         )
 
 
-def run_ioc_extractor_tool(raw_text: str) -> ToolResult:
-    """
-    Tool 4: IOC Extraction.
-    Extracts IPs, domains, hashes, URLs, emails, file paths from raw logs.
-    """
+def run_ioc_extractor_tool(inv_obj: InvestigationObject) -> ToolResult:
+    """Tool 4: IOC Extraction."""
     t0 = time.time()
     try:
         from backend.processing.ioc_extractor import extract_iocs
-
-        ioc_report = extract_iocs(raw_text)
-
-        tags = []
-        if ioc_report.suspicious_count > 0:
-            tags.append(f"ioc_{ioc_report.suspicious_count}_suspicious")
-        if ioc_report.ipv4:
-            public_ips = [i for i in ioc_report.ipv4 if not i.is_private]
-            if public_ips:
-                tags.append(f"ioc_{len(public_ips)}_public_ips")
-        if ioc_report.hashes:
-            tags.append(f"ioc_{len(ioc_report.hashes)}_hashes")
-        if ioc_report.domains:
-            sus_domains = [d for d in ioc_report.domains if not d.is_benign]
-            if sus_domains:
-                tags.append(f"ioc_{len(sus_domains)}_suspicious_domains")
-        if ioc_report.urls:
-            tags.append(f"ioc_{len(ioc_report.urls)}_urls")
-
+        ioc_report = extract_iocs(inv_obj.raw_logs_quarantine)
+        evidence = ioc_report.to_dict()
+        
+        # V9 FIX: Normalize the key name. ioc_extractor may emit 'suspicious_count'
+        # or 'total_suspicious'. We unify under 'suspicious_count' so the
+        # DecisionEngine can reliably read it.
+        suspicious_count = (
+            evidence.get("suspicious_count")
+            or evidence.get("total_suspicious")
+            or 0
+        )
+        evidence["suspicious_count"] = suspicious_count
+        
         return ToolResult(
-            tool_name="ioc_extractor",
-            output=ioc_report.to_dict(),
-            confidence_contribution=min(ioc_report.suspicious_count / 10.0, 1.0) * 0.05,
-            evidence_tags=tags,
-            execution_time_ms=(time.time() - t0) * 1000,
+            tool_name="IOC Analyst",
+            evidence=evidence,
+            confidence=min(suspicious_count / 10.0, 1.0) * 0.05,
+            metadata={"tags": ["suspicious_iocs"] if suspicious_count > 0 else []},
+            execution_time=(time.time() - t0) * 1000,
+            provenance="ioc_regex"
         )
     except Exception as e:
         return ToolResult(
-            tool_name="ioc_extractor",
-            status="error",
-            error_message=str(e),
-            execution_time_ms=(time.time() - t0) * 1000,
+            tool_name="IOC Analyst", evidence={"error": str(e)}, confidence=0.0,
+            execution_time=(time.time() - t0) * 1000, provenance="ioc_regex"
         )
 
 
-def run_pattern_match_tool(events: list) -> ToolResult:
-    """
-    Tool 5: Heuristic Pattern Detection.
-    Runs enhanced pattern matching against event sequences.
-    """
+def run_pattern_match_tool(inv_obj: InvestigationObject) -> ToolResult:
+    """Tool 5: Heuristic Pattern Detection."""
     t0 = time.time()
     try:
         from backend.processing.pattern_detector import detect_patterns
-
-        pattern_name, pattern_score, matched_indicators, mitre_suggestions = detect_patterns(events)
-
-        tags = []
-        if pattern_name:
-            tags.append(f"pattern_{pattern_name.lower()}")
-            if pattern_score >= 0.8:
-                tags.append("high_confidence_pattern")
+        events = _hydrate_events(inv_obj)
+        pattern_name, pattern_score, matched, mitre = detect_patterns(events)
 
         return ToolResult(
-            tool_name="pattern_match",
-            output={
+            tool_name="Pattern Analyst",
+            evidence={
                 "pattern_name": pattern_name,
                 "pattern_score": round(pattern_score, 2),
-                "matched_indicators": matched_indicators,
-                "mitre_suggestions": mitre_suggestions,
             },
-            confidence_contribution=pattern_score * 0.1 if pattern_name else 0.0,
-            evidence_tags=tags,
-            execution_time_ms=(time.time() - t0) * 1000,
+            confidence=pattern_score * 0.1 if pattern_name else 0.0,
+            metadata={"tags": [f"pattern_{pattern_name}"] if pattern_name else []},
+            execution_time=(time.time() - t0) * 1000,
+            provenance="heuristic_engine"
         )
     except Exception as e:
         return ToolResult(
-            tool_name="pattern_match",
-            status="error",
-            error_message=str(e),
-            execution_time_ms=(time.time() - t0) * 1000,
+            tool_name="Pattern Analyst", evidence={"error": str(e)}, confidence=0.0,
+            execution_time=(time.time() - t0) * 1000, provenance="heuristic_engine"
         )
 
 
-def run_playbook_tool(
-    incident_type: str,
-    severity: str,
-    campaign_pattern: Optional[str] = None,
-    pattern_name: Optional[str] = None,
-) -> ToolResult:
-    """
-    Tool 6: Response Playbook Recommendation.
-    Selects appropriate response playbook based on incident classification.
-    """
+def run_attack_graph_tool(inv_obj: InvestigationObject) -> ToolResult:
+    """Tool 6: Attack Graph Builder."""
     t0 = time.time()
     try:
-        from backend.reasoning.playbooks import get_playbook
-
-        playbook = get_playbook(
-            incident_type=incident_type,
-            severity=severity,
-            campaign_pattern=campaign_pattern,
-            pattern_name=pattern_name,
-        )
-
+        from backend.models.attack_graph import build_attack_graph, attack_graph_summary
+        events = _hydrate_events(inv_obj)
+        graph_dict = build_attack_graph(events)
+        
+        # V12 FIX: build_attack_graph returns a dict, not a NetworkX graph object.
+        node_count = graph_dict.get("node_count", len(graph_dict.get("nodes", [])))
+        edge_count = graph_dict.get("edge_count", len(graph_dict.get("edges", [])))
+        kill_chain = graph_dict.get("kill_chain_stage", "Benign")
+        stages = graph_dict.get("stages", [])
+        attack_path = graph_dict.get("attack_path", [])
+        
         return ToolResult(
-            tool_name="playbook",
-            output=playbook.to_dict(),
-            evidence_tags=[f"playbook_{playbook.playbook_id.lower()}"],
-            execution_time_ms=(time.time() - t0) * 1000,
+            tool_name="Attack Graph Builder",
+            evidence={
+                "summary": attack_graph_summary(graph_dict),
+                "node_count": node_count,
+                "edge_count": edge_count,
+                "kill_chain_stage": kill_chain,
+                "stages": stages,
+                "attack_path": attack_path,
+            },
+            confidence=0.05 if node_count > 1 else 0.0,
+            metadata={"tags": ["attack_graph", f"kill_chain_{kill_chain}"]},
+            execution_time=(time.time() - t0) * 1000,
+            provenance="networkx"
         )
     except Exception as e:
         return ToolResult(
-            tool_name="playbook",
-            status="error",
-            error_message=str(e),
-            execution_time_ms=(time.time() - t0) * 1000,
+            tool_name="Attack Graph Builder", evidence={"error": str(e)}, confidence=0.0,
+            execution_time=(time.time() - t0) * 1000, provenance="networkx"
         )
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# TOOL REGISTRY & ORCHESTRATOR
-# ═══════════════════════════════════════════════════════════════════════════════
+def run_cross_session_memory_tool(inv_obj: InvestigationObject) -> ToolResult:
+    """Tool 7: Cross Session Memory."""
+    t0 = time.time()
+    try:
+        from backend.reasoning.memory import get_memory_store
+        
+        entity_id = inv_obj.entity_info.get("primary_entity", "")
+        memory = get_memory_store()
+        all_sessions = memory.get_sessions(entity_id)
+        suspicious_sessions = [s for s in all_sessions if any(et != "NORMAL" for et in s.event_types)]
+            
+        return ToolResult(
+            tool_name="Cross Session Memory",
+            evidence={
+                "total_sessions": len(all_sessions),
+                "suspicious_sessions": len(suspicious_sessions),
+            },
+            confidence=min(len(suspicious_sessions) / 4.0, 1.0) * 0.15,
+            metadata={"tags": ["historical_sessions"] if len(suspicious_sessions) > 1 else []},
+            execution_time=(time.time() - t0) * 1000,
+            provenance="memory_store"
+        )
+    except Exception as e:
+        return ToolResult(
+            tool_name="Cross Session Memory", evidence={"error": str(e)}, confidence=0.0,
+            execution_time=(time.time() - t0) * 1000, provenance="memory_store"
+        )
 
-# Maps planner-facing tool names to executor functions
+
+# ── Tool Orchestrator ───────────────────────────────────────────────────
+
 TOOL_REGISTRY: Dict[str, Callable] = {
     "Behavior Analyst": run_anomaly_score_tool,
     "Pattern Analyst": run_pattern_match_tool,
     "Threat Context": run_threat_intel_tool,
     "IOC Analyst": run_ioc_extractor_tool,
     "MITRE Knowledge": run_rag_lookup_tool,
+    "Attack Graph Builder": run_attack_graph_tool,
+    "Cross Session Memory": run_cross_session_memory_tool,
 }
-
-# Tools that can run independently in parallel
-PARALLEL_GROUPS = [
-    {"Behavior Analyst", "Pattern Analyst"},  # Group 1: independent
-    {"Threat Context", "IOC Analyst"},         # Group 2: independent
-    {"MITRE Knowledge"},                       # Group 3: may depend on patterns
-]
 
 
 def execute_tools(
-    approved_tools: List[str],
-    raw_events: list,
-    raw_logs: str = "",
-    event_sequence: Optional[List[int]] = None,
-    anomaly_score: Optional[float] = None,
+    approved_plan: ApprovedPlan,
+    inv_obj: InvestigationObject,
 ) -> List[ToolResult]:
     """
-    Execute approved specialist tools from a validated plan.
-
-    Dispatches tools based on the TOOL_REGISTRY.  Independent tools
-    run in parallel via concurrent.futures.  Failed tools are logged
-    and skipped — the investigation continues with remaining tools.
-
-    Args:
-        approved_tools: List of tool names from ValidatedPlan.approved_tools
-        raw_events: SecurityEvent objects for specialist analysis
-        raw_logs: Raw log text for IOC extraction
-        event_sequence: Integer-encoded event sequence for LSTM
-        anomaly_score: Pre-computed anomaly score (if available)
-
-    Returns:
-        List of ToolResult objects (one per tool, including errors)
+    Execute tools from the ApprovedPlan, passing the InvestigationObject.
+    
+    V4 FIX: Replaced broken parallel group algorithm.
+    - If execution_strategy is 'Parallel': all tools run concurrently in a ThreadPoolExecutor.
+    - If execution_strategy is 'Sequential': tools run one at a time.
     """
-    import concurrent.futures
-
     results: List[ToolResult] = []
-    tools_to_run = [t for t in approved_tools if t in TOOL_REGISTRY]
+    tools_to_run = [t for t in approved_plan.approved_tools if t.tool_name in TOOL_REGISTRY]
 
     if not tools_to_run:
-        logger.warning("No valid tools to execute from approved list")
+        logger.info("[Orchestrator] No tools to execute.")
         return results
 
-    def _run_single_tool(tool_name: str) -> ToolResult:
-        """Execute a single tool with error recovery."""
+    def _run(tool_intent) -> ToolResult:
+        tool_name = tool_intent.tool_name
+        func = TOOL_REGISTRY[tool_name]
+        logger.info(f"[Orchestrator] Executing: {tool_name}")
         try:
-            if tool_name == "Behavior Analyst":
-                seq = event_sequence or []
-                res = run_anomaly_score_tool(seq, anomaly_score)
-            elif tool_name == "Pattern Analyst":
-                res = run_pattern_match_tool(raw_events)
-            elif tool_name == "Threat Context":
-                res = run_threat_intel_tool(raw_events)
-            elif tool_name == "IOC Analyst":
-                res = run_ioc_extractor_tool(raw_logs)
-            elif tool_name == "MITRE Knowledge":
-                res = run_rag_lookup_tool(raw_events)
-            else:
-                res = ToolResult(
-                    tool_name=tool_name,
-                    status="error",
-                    error_message=f"Unknown tool: {tool_name}",
-                )
-
-            # Set the display name
-            res.tool_name = tool_name
-            return res
-
+            result = func(inv_obj)
+            result.reason_selected = tool_intent.reason_selected
+            result.expected_evidence = tool_intent.expected_evidence
+            logger.info(f"[Orchestrator] Completed: {tool_name} (confidence={result.confidence:.3f})")
+            return result
         except Exception as e:
-            logger.error(f"Tool '{tool_name}' failed with exception: {e}")
+            logger.error(f"[Orchestrator] Tool '{tool_name}' crashed: {e}")
             return ToolResult(
                 tool_name=tool_name,
-                status="error",
-                error_message=f"Unhandled exception: {e}",
+                reason_selected=tool_intent.reason_selected,
+                expected_evidence=tool_intent.expected_evidence,
+                evidence={"error": f"Crash: {str(e)}"},
+                confidence=0.0,
+                execution_time=0.0,
+                provenance="orchestrator"
             )
 
-    # Execute tools — parallel where possible
-    # Group tools by parallel eligibility
-    parallel_batch: List[str] = []
-    sequential: List[str] = []
-
-    for tool in tools_to_run:
-        # Check if tool can be parallelized with others in the batch
-        can_parallel = False
-        for group in PARALLEL_GROUPS:
-            if tool in group and all(t in group for t in parallel_batch):
-                can_parallel = True
-                break
-        if can_parallel or not parallel_batch:
-            parallel_batch.append(tool)
-        else:
-            sequential.append(tool)
-
-    # Run parallel batch
-    if len(parallel_batch) > 1:
-        with concurrent.futures.ThreadPoolExecutor(
-            max_workers=min(len(parallel_batch), 4)
-        ) as executor:
-            future_map = {
-                executor.submit(_run_single_tool, t): t
-                for t in parallel_batch
-            }
+    strategy = approved_plan.original_plan.execution_strategy.lower()
+    
+    if strategy == "parallel" and len(tools_to_run) > 1:
+        logger.info(f"[Orchestrator] Running {len(tools_to_run)} tools in PARALLEL.")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(tools_to_run), 4)) as executor:
+            future_map = {executor.submit(_run, t): t for t in tools_to_run}
             for future in concurrent.futures.as_completed(future_map):
+                tool_intent = future_map[future]
                 try:
-                    result = future.result(timeout=300.0)
-                    results.append(result)
+                    results.append(future.result(timeout=None))  # No timeout for local models
                 except Exception as e:
-                    tool_name = future_map[future]
-                    logger.error(f"Parallel tool '{tool_name}' failed: {e}")
+                    logger.error(f"[Orchestrator] Future for '{tool_intent.tool_name}' raised: {e}")
                     results.append(ToolResult(
-                        tool_name=tool_name,
-                        status="error",
-                        error_message=str(e),
+                        tool_name=tool_intent.tool_name, 
+                        reason_selected=tool_intent.reason_selected,
+                        expected_evidence=tool_intent.expected_evidence,
+                        evidence={"error": str(e)}, confidence=0.0,
+                        execution_time=0.0, provenance="orchestrator"
                     ))
     else:
-        for tool in parallel_batch:
-            results.append(_run_single_tool(tool))
-
-    # Run sequential tools
-    for tool in sequential:
-        results.append(_run_single_tool(tool))
-
-    logger.info(
-        f"Executed {len(results)} tools: "
-        f"{sum(1 for r in results if r.status == 'success')} success, "
-        f"{sum(1 for r in results if r.status == 'error')} errors"
-    )
+        logger.info(f"[Orchestrator] Running {len(tools_to_run)} tools SEQUENTIALLY.")
+        for tool_intent in tools_to_run:
+            results.append(_run(tool_intent))
 
     return results

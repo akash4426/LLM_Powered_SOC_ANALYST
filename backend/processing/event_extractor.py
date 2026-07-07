@@ -116,6 +116,7 @@ class SecurityEvent:
             "timestamp":   self.timestamp,
             "severity":    self.severity,
             "description": self.description,
+            "raw":         self.raw,
             "mitre_hint":  self.mitre_hint,
         }
 

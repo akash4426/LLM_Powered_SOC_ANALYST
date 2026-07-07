@@ -1,20 +1,18 @@
 """
 main.py
 -------
-FastAPI application — LLM-Powered SOC Analyst API.
+FastAPI application — Autonomous Agentic SOC Investigation Platform.
 
-Full pipeline:
+Architecture (8-Phase Agentic Loop):
   POST /investigate
-  1. Parse & normalize logs
-  2. Extract typed security events
-  3. Build behavioral sessions
-  4. Score with LSTM anomaly detector (with heuristic fallback)
-  5. Enrich with threat intelligence
-  6. Retrieve MITRE ATT&CK RAG context  ← using get_mitre_query()
-  7. LLM investigation (Phi-3.5 local) — receives pre-fetched RAG context
-  8. Reconstruct attack graph (NetworkX)
-  9. Generate structured incident report  ← includes rag_context
-  10. Return full JSON
+  1. PERCEIVE  — Parse & normalize logs into InvestigationObject (deterministic)
+  2. PLAN      — Planner LLM generates InvestigationPlan (hypothesis + tools)
+  3. VALIDATE  — Policy Engine enforces tool allowlists & budget guardrails
+  4. EXECUTE   — Tool Orchestrator dispatches approved specialist tools
+  5. AGGREGATE — Evidence Aggregator merges ToolResults into InvestigationObject
+  6. REFLECT   — Reflection LLM evaluates evidence sufficiency (may loop to Phase 2)
+  7. DECIDE    — Decision Engine deterministically computes Severity/Risk/Confidence
+  8. REPORT    — Report Generator LLM writes executive summary & timeline
 """
 
 # Load environment variables from .env FIRST before any other imports
@@ -35,10 +33,8 @@ from backend.processing.session_builder import build_sessions, sessions_summary
 from backend.processing.threat_intel import enrich_events
 from backend.models.attack_graph import build_attack_graph, attack_graph_summary
 from backend.models.lstm_model import score_sequence, score_network_flow, is_network_flow_model_loaded
-from backend.reasoning.llm_agent import investigate_logs
 from backend.rag.rag_engine import retrieve_context
-from backend.incident_report import generate_report
-from backend.reasoning.agent_layer import analyze_with_agent, get_memory_store
+from backend.reasoning.agent_layer import run_investigation_loop
 from backend.evaluation.evaluator import run_evaluation as _run_evaluation
 
 # Authentication imports
@@ -89,8 +85,7 @@ async def add_private_network_header(request: Request, call_next):
 # ── Health check ──────────────────────────────────────────────────────────────
 @app.get("/health")
 def health_check():
-    from backend.reasoning.llm_agent import MODEL_NAME
-    from backend.reasoning.gemini_agent import is_gemini_available
+    import os
     return {
         "status": "SOC Analyst API running",
         "version": "8.0.0",
@@ -103,9 +98,9 @@ def health_check():
             "Behavior Analyst", "Pattern Analyst",
             "Threat Context", "IOC Analyst", "MITRE Knowledge"
         ],
-        "agent_entities_tracked": len(get_memory_store().get_all_entities()),
-        "llm_model": MODEL_NAME,
-        "gemini_fallback_available": is_gemini_available(),
+        "agent_entities_tracked": 0, # Temporarily disabled
+        "llm_model": os.getenv("OPENROUTER_MODEL", "Agentic Gateway"),
+        "gemini_fallback_available": bool(os.getenv("GEMINI_API_KEY")),
         "features": [
             "LLM Investigation Planner",
             "Dynamic Reflection & Replanning",
@@ -127,6 +122,7 @@ def dashboard_stats():
     Returns entity counts, pipeline component status, and agent configuration.
     No authentication required (public health/stats endpoint).
     """
+    from backend.reasoning.memory import get_memory_store
     memory = get_memory_store()
     entities = memory.get_all_entities()
 
@@ -334,237 +330,252 @@ def _process_raw_logs(raw_logs: str):
     return normalized_logs, events, event_sequence_ints, event_sequence_types, anomaly_score
 
 
+def _build_rich_agentic_response(inv_obj, logs_snippet, start_t, end_t):
+    # Extract stats from tools
+    anomaly_score = 0.0
+    threat_intel = {}
+    attack_graph = {}
+    mitre_techniques = []
+    rag_snippets = []
+    iocs_extracted = {}
+    campaign_pattern = None
+    
+    for t in inv_obj.tool_outputs:
+        if t.tool_name == "Behavior Analyst" and isinstance(t.evidence, dict):
+            anomaly_score = t.evidence.get("anomaly_score", 0.0)
+        elif t.tool_name == "Threat Context":
+            threat_intel = t.evidence if isinstance(t.evidence, dict) else {}
+        elif t.tool_name == "Attack Graph Builder":
+            attack_graph = t.evidence if isinstance(t.evidence, dict) else {}
+        elif t.tool_name == "MITRE Knowledge" and isinstance(t.evidence, dict):
+            mitre_techniques = t.evidence.get("techniques_found", [])
+            rag_snippets = [t.evidence.get("rag_context", "")]
+        elif t.tool_name == "IOC Analyst" and isinstance(t.evidence, dict):
+            # Extract just the arrays (ipv4, domains, etc.) from the evidence dictionary
+            iocs_extracted = {k: v for k, v in t.evidence.items() if k not in ("total_count", "suspicious_count")}
+        elif t.tool_name == "Pattern Analyst" and isinstance(t.evidence, dict):
+            campaign_pattern = t.evidence.get("pattern_name", None)
+
+    # Reconstruct reasoning_trace with hierarchical details
+    phases = []
+    phases.append({
+        "phase": "PERCEIVE", 
+        "desc": "Parsed logs and built InvestigationObject."
+    })
+    
+    tool_names = [t.tool_name for t in inv_obj.tool_outputs]
+    
+    if inv_obj.investigation_report.get("planner_error"):
+        err = inv_obj.investigation_report["planner_error"]
+        phases.append({
+            "phase": "PLAN (ERROR)",
+            "desc": "Planner failed after all retries.",
+            "details": {
+                "Reason": err.get("reason", "Unknown"),
+                "Action": "Investigation Terminated"
+            }
+        })
+    elif inv_obj.planner_hypothesis:
+        phases.append({
+            "phase": "PLAN", 
+            "desc": f"Generated investigation plan.",
+            "details": {
+                "Hypothesis": inv_obj.planner_hypothesis,
+                "Required Tools": ", ".join(tool_names),
+                "Execution Strategy": "Parallel tool dispatch"
+            }
+        })
+        
+    if tool_names:
+        phases.append({
+            "phase": "EXECUTE", 
+            "desc": f"Executed specialist tools.",
+            "details": {
+                "Execution Order": ", ".join(tool_names),
+                "Skipped Tools": str(len(inv_obj.skipped_tools_log))
+            }
+        })
+        
+    phases.append({
+        "phase": "FUSE", 
+        "desc": "Aggregated evidence.",
+        "details": {
+            "Evidence Completeness": f"{int(inv_obj.evidence_completeness * 100)}%",
+            "Timeline Entries": str(len(inv_obj.evidence_timeline))
+        }
+    })
+    
+    if inv_obj.last_reflection_data:
+        phases.append({
+            "phase": "REFLECT", 
+            "desc": "Evaluated evidence sufficiency.",
+            "details": {
+                "Needs Replan": str(inv_obj.last_reflection_data.get("needs_more_evidence")),
+                "Reasoning": inv_obj.last_reflection_data.get("reasoning", "")
+            }
+        })
+        
+    phases.append({
+        "phase": "DECIDE", 
+        "desc": "Computed final deterministic decision.",
+        "details": {
+            "Risk": str(inv_obj.risk),
+            "Severity": inv_obj.severity,
+            "Factors": ", ".join(inv_obj.severity_factors)
+        }
+    })
+    
+    if inv_obj.report:
+        phases.append({"phase": "REPORT", "desc": "Generated investigation narrative."})
+    
+    # Tool results for the trace tab (both executed and skipped)
+    tool_results = []
+    for t in inv_obj.tool_outputs:
+        tool_results.append({
+            "tool_name": t.tool_name,
+            "status": "success" if not isinstance(t.evidence, dict) or "error" not in t.evidence else "error",
+            "reason": getattr(t, "reason_selected", "Executed successfully"),
+            "expected_evidence": getattr(t, "expected_evidence", "No expected evidence provided"),
+            "execution_time_ms": t.execution_time,
+            "confidence_contribution": t.confidence,
+            "evidence_tags": []
+        })
+        
+    for s in inv_obj.skipped_tools_log:
+        tool_results.append({
+            "tool_name": s["tool"],
+            "status": "skipped",
+            "reason": s.get("reason", "Not selected"),
+            "execution_time_ms": 0,
+            "confidence_contribution": 0.0,
+            "evidence_tags": []
+        })
+        
+    # Build dynamic progressive confidence evolution
+    simulated_conf_evol = [0.0]  # Start before Planner
+    if inv_obj.tool_outputs:
+        from backend.reasoning.decision_engine import DecisionEngine
+        from backend.schemas.investigation import InvestigationObject as InvObj
+        import copy
+        
+        # We need a dummy to replay the tools
+        dummy_inv = InvObj(investigation_id="dummy")
+        # Ensure we capture any contradictions that apply to the real object
+        dummy_inv.evidence_timeline = copy.deepcopy(inv_obj.evidence_timeline)
+        
+        for t in inv_obj.tool_outputs:
+            dummy_inv.tool_outputs.append(t)
+            dummy_inv.evidence_completeness = min(len(dummy_inv.tool_outputs) / 7.0, 1.0)
+            DecisionEngine.evaluate(dummy_inv)
+            simulated_conf_evol.append(dummy_inv.confidence)
+            
+    simulated_conf_evol.append(inv_obj.confidence) # Reflection phase
+    simulated_conf_evol.append(inv_obj.confidence) # Decision phase
+
+    def _extract_section(text, titles):
+        import re
+        for title in titles:
+            match = re.search(r'(?i)\*{0,2}' + re.escape(title) + r'\*{0,2}[:\n]+(.*?)(?=\n\n\*{0,2}|\Z)', text, re.DOTALL)
+            if match:
+                return match.group(1).strip()
+        return ""
+
+    raw_report = inv_obj.report or ""
+    investigation_report = {
+        "executive_summary": _extract_section(raw_report, ["Executive Summary", "Summary"]),
+        "root_cause": _extract_section(raw_report, ["Investigation Timeline", "Timeline", "Root Cause"]),
+        "mitre_explanation": _extract_section(raw_report, ["MITRE ATT&CK Mapping", "MITRE"]),
+        "recommendations": _extract_section(raw_report, ["Action Plan", "Recommendations", "Response"])
+    }
+    
+    # If parsing failed, fallback to dumping it all in executive summary
+    if not any(investigation_report.values()):
+        investigation_report["executive_summary"] = raw_report
+
+    return {
+        "incident_id": inv_obj.investigation_id,
+        "investigation_status": "COMPLETED",
+        "severity": inv_obj.severity,
+        "decision": inv_obj.decision,
+        "risk_score": int(inv_obj.risk),
+        "confidence": inv_obj.confidence,
+        "anomaly_score": anomaly_score,
+        "entities": [inv_obj.entity_info.get("primary_entity", "Unknown")],
+        "investigation_hypothesis": inv_obj.planner_hypothesis,
+        "planned_tools": tool_names,
+        "completed_tools": tool_names,
+        "escalation_tools": [],
+        "skipped_tools": [s["tool"] for s in inv_obj.skipped_tools_log],
+        "mitre_mappings": mitre_techniques,
+        "campaign_pattern": campaign_pattern,
+        "iocs_extracted": iocs_extracted,
+        "reasoning_trace": phases,
+        "reflection_history": inv_obj.reflection_history,
+        "confidence_evolution": simulated_conf_evol,
+        "confidence_breakdown": inv_obj.confidence_breakdown,
+        "risk_breakdown": inv_obj.risk_breakdown,
+        "severity_factors": inv_obj.severity_factors,
+        "investigation_report": investigation_report,
+        "evidence_board": [
+            {"source": e.get("source"), "description": e.get("evidence_summary")} 
+            for e in inv_obj.evidence_timeline
+        ],
+        "correlation_depth": 1,
+        "llm_explanation": inv_obj.report,
+        "response_playbook": {"name": "Deterministic Policy", "ACTIONS": [inv_obj.decision]},
+        "tool_results": tool_results,
+        "total_analysis_ms": (end_t - start_t) * 1000,
+        "plan_iterations": inv_obj.plan_iterations,
+        
+        # Legacy fields for dashboard compatibility
+        "timestamp": inv_obj.session_metadata.get("start_time", ""),
+        "attack_stage": "Detection",
+        "kill_chain_stage": "Analysis",
+        "mitre_techniques": mitre_techniques,
+        "event_types": [],
+        "session_count": 1,
+        "events_analyzed": inv_obj.session_metadata.get("total_events", 0),
+        "threat_intel": threat_intel,
+        "attack_graph": attack_graph,
+        "rag_query": "",
+        "rag_snippets": rag_snippets,
+        "recommended_response": [inv_obj.decision],
+        "raw_log_sample": logs_snippet,
+    }
+
+
 # ── Main investigation endpoint ───────────────────────────────────────────────
-@app.post("/investigate", response_model=InvestigateResponse)
+@app.post("/investigate")
 async def investigate(
     request: LogRequest,
     current_user: TokenData = Depends(get_current_user)
 ):
     """
-    Full SOC investigation pipeline.
-    
-    **Requires JWT authentication.**
-    
-    1. Get token: POST /auth/token
-    2. Use token: Add `Authorization: Bearer <token>` header
-    
-    Accepts raw security logs (text, JSON array, or JSON Lines).
-    Returns a structured incident report with:
-      - LSTM anomaly score
-      - MITRE ATT&CK techniques
-      - Threat intelligence enrichment
-      - Attack graph (NetworkX)
-      - RAG-retrieved MITRE ATT&CK passages
-      - LLM-generated explanation and recommendations
+    Agentic SOC Investigation Pipeline.
     """
-    raw_logs = request.logs
-
-    # ── Steps 1-4: Parse, Extract, Session Build, LSTM Scoring ────────────
-    normalized_logs, events, event_sequence_ints, event_sequence_types, anomaly_score = _process_raw_logs(raw_logs)
-
-    sessions = build_sessions(events)
-    session_data = sessions_summary(sessions)
-
-    # ── Step 5: Threat Intelligence Enrichment ────────────────────────────
-    ti_report = enrich_events(events)
-    ti_dict = ti_report.to_dict()
-    ti_summary = ti_report.summary_text()
-
-    # ── Step 6: MITRE ATT&CK RAG Retrieval ───────────────────────────────
-    # Build a targeted query from the MITRE hints embedded in each detected
-    # event type (e.g. "T1110 Brute Force | T1059 Command Scripting |…")
-    # instead of using raw log text — much better semantic matching.
-    mitre_query = get_mitre_query(events)
-    rag_context = retrieve_context(mitre_query)
-
-    # Keep individual snippets so the frontend can display them
-    rag_snippets = [
-        s.strip() for s in rag_context.split("\n\n") if s.strip()
-    ]
-
-    # ── Step 7: Attack Graph Reconstruction ──────────────────────────────
-    graph = build_attack_graph(events)
-    graph_summary = attack_graph_summary(graph)
-
-    # ── Step 8: LLM Investigation (receives pre-fetched RAG context) ──────
-    llm_warning = ""
-    try:
-        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-        future = executor.submit(
-            investigate_logs,
-            log_text=raw_logs,
-            event_sequence=event_sequence_types,
-            anomaly_score=anomaly_score,
-            threat_intel_summary=ti_summary,
-            attack_graph_summary=graph_summary,
-            rag_context=rag_context,         # <— RAG context passed explicitly
-        )
-        # Timeout after 60 seconds for OpenRouter API
-        llm_output = future.result(timeout=60.0)
-        executor.shutdown(wait=False)
-    except concurrent.futures.TimeoutError:
-        llm_warning = "OpenRouter LLM generation timed out. The API request took too long."
-        llm_output = {
-            "attack_stage": "Unknown",
-            "mitre_technique": ["Unknown"],
-            "severity": "MEDIUM",
-            "confidence": "50%",
-            "explanation": "OpenRouter LLM generation timed out.\nThe API request to OpenRouter took too long to complete.",
-            "recommended_actions": ["Check OpenRouter API status or check your internet connection."]
-        }
-    except Exception as e:  # catches RuntimeError, etc.
-        llm_warning = f"OpenRouter LLM unavailable: {e}"
-        llm_output = {
-            "attack_stage": "Unknown",
-            "mitre_technique": ["Unknown"],
-            "severity": "MEDIUM",
-            "confidence": "50%",
-            "explanation": "OpenRouter LLM could not execute successfully.\nCore detections (events, sessions, anomaly score, threat intel, RAG, attack graph) were still processed.\nReview technical indicators and enrichment data in this report for triage.",
-            "recommended_actions": ["Ensure your API key is valid and configured.", "Ensure you have stable internet connection."]
-        }
-
-    # ── Step 9: Incident Report Generation ───────────────────────────────
-    report = generate_report(
-        sessions=session_data["sessions"],
-        anomaly_score=anomaly_score,
-        threat_intel=ti_dict,
-        attack_graph=graph,
-        llm_parsed=llm_output,
-        raw_logs=raw_logs,
-        rag_snippets=rag_snippets,       # <— RAG passages now in report
-        mitre_query=mitre_query,         # <— show what query was used
-        events=events,                   # ← for MITRE technique fallback
-    )
-
-    if llm_warning:
-        report["llm_warning"] = llm_warning
-
-    # ── Step 10: Add legacy field for frontend backward-compat ────────────
-    import json
-    report["investigation"] = json.dumps(llm_output)
-
-    return InvestigateResponse(**report)
+    import time
+    start_t = time.time()
+    inv_obj = run_investigation_loop(raw_logs=request.logs)
+    end_t = time.time()
+    
+    return _build_rich_agentic_response(inv_obj, request.logs[:200], start_t, end_t)
 
 
 # ── Agentic AI Layer endpoint ─────────────────────────────────────────────────
-@app.post("/investigate/agent", response_model=AgentAnalysisResponse)
+@app.post("/investigate/agent")
 async def investigate_with_agent(
     request: AgentLogRequest,
     current_user: TokenData = Depends(get_current_user),
 ):
     """
-    Full SOC investigation pipeline + Agentic AI correlation layer.
-
-    **Requires JWT authentication.**
-
-    Runs the complete pipeline (Steps 1-9), then applies the Agent Layer:
-      - Stores session in entity memory
-      - Correlates across historical sessions for the same entity
-      - Applies compound intelligence (re-runs LSTM + RAG on combined sequences)
-      - Builds structured timeline and incident
-      - Computes deterministic severity and confidence
-      - Generates LLM explanation (narrative only)
-
-    Submit multiple requests for the same entity_id to see cross-session
-    correlation in action.
+    Autonomous Agentic AI SOC Investigation Platform.
     """
-    from datetime import datetime as _dt, timezone as _tz
-
-    raw_logs = request.logs
-
-    # ── Steps 1-4: Parse, Extract, Session Build, LSTM Scoring ───────────
-    normalized_logs, events, event_sequence_ints, event_sequence_types, anomaly_score = _process_raw_logs(raw_logs)
-    sessions = build_sessions(events)
-
-    # ── Auto-detect entity_id if not provided ────────────────────────────
-    entity_id = request.entity_id
-    if not entity_id:
-        # Use most common source_ip, then user, then hostname
-        from collections import Counter
-        ips = [e.source_ip for e in events if e.source_ip]
-        users = [e.user for e in events if e.user]
-        hosts = [e.hostname for e in events if e.hostname]
-        if ips:
-            entity_id = Counter(ips).most_common(1)[0][0]
-        elif users:
-            entity_id = Counter(users).most_common(1)[0][0]
-        elif hosts:
-            entity_id = Counter(hosts).most_common(1)[0][0]
-        else:
-            entity_id = "unknown_entity"
-
-    timestamp = request.timestamp or _dt.now(_tz.utc).isoformat()
-
-    # ── Steps 5-9: Run existing pipeline (TI, RAG, LLM, Report) ──────────
-    ti_report = enrich_events(events)
-    ti_summary = ti_report.summary_text()
-    mitre_query = get_mitre_query(events)
-    rag_context = retrieve_context(mitre_query)
-    rag_snippets = [s.strip() for s in rag_context.split("\n\n") if s.strip()]
-    graph = build_attack_graph(events)
-    graph_summary = attack_graph_summary(graph)
-
-    llm_warning = ""
-    try:
-        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-        future = executor.submit(
-            investigate_logs,
-            log_text=raw_logs,
-            event_sequence=event_sequence_types,
-            anomaly_score=anomaly_score,
-            threat_intel_summary=ti_summary,
-            attack_graph_summary=graph_summary,
-            rag_context=rag_context,
-        )
-        llm_output = future.result(timeout=60.0)
-        executor.shutdown(wait=False)
-    except concurrent.futures.TimeoutError:
-        llm_warning = "LLM generation timed out."
-        llm_output = {
-            "attack_stage": "Unknown", "mitre_technique": ["Unknown"],
-            "severity": "MEDIUM", "confidence": "50%",
-            "explanation": "LLM timed out.",
-            "recommended_actions": ["Retry or check API status."],
-        }
-    except Exception as e:
-        llm_warning = f"LLM unavailable: {e}"
-        llm_output = {
-            "attack_stage": "Unknown", "mitre_technique": ["Unknown"],
-            "severity": "MEDIUM", "confidence": "50%",
-            "explanation": "LLM could not execute.",
-            "recommended_actions": ["Check API key and connection."],
-        }
-
-    session_data = sessions_summary(sessions)
-    pipeline_report = generate_report(
-        sessions=session_data["sessions"],
-        anomaly_score=anomaly_score,
-        threat_intel=ti_report.to_dict(),
-        attack_graph=graph,
-        llm_parsed=llm_output,
-        raw_logs=raw_logs,
-        rag_snippets=rag_snippets,
-        mitre_query=mitre_query,
-        events=events,
-    )
-    if llm_warning:
-        pipeline_report["llm_warning"] = llm_warning
-
-    # ── Step 10: Agentic AI Layer ─────────────────────────────────────────
-    agent_result = analyze_with_agent(
-        sequence=event_sequence_ints,
-        entity_id=entity_id,
-        timestamp=timestamp,
-        events=events,
-        threat_intel_score=ti_report.max_risk_score / 100.0,
-        anomaly_score=anomaly_score,
-        raw_logs=raw_logs,
-    )
-
-    # Attach the pipeline report for full context
-    agent_result["pipeline_report"] = pipeline_report
-
-    return AgentAnalysisResponse(**agent_result)
+    import time
+    start_t = time.time()
+    inv_obj = run_investigation_loop(raw_logs=request.logs, entity_id=request.entity_id)
+    end_t = time.time()
+    
+    return _build_rich_agentic_response(inv_obj, request.logs[:200], start_t, end_t)
 
 
 # ── Auxiliary endpoints ───────────────────────────────────────────────────────

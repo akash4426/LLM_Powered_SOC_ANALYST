@@ -1,181 +1,172 @@
-# LLM-Powered SOC Analyst — Hybrid Agentic AI Investigation Platform
+# Autonomous Agentic SOC Investigation Platform
 
 [![Python](https://img.shields.io/badge/Python-3.11-blue?logo=python)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/React-18-61DAFB?logo=react)](https://reactjs.org/)
-[![PyTorch](https://img.shields.io/badge/PyTorch-2.x-EE4C2C?logo=pytorch)](https://pytorch.org/)
-[![ChromaDB](https://img.shields.io/badge/ChromaDB-RAG-orange)](https://www.trychroma.com/)
-[![Version](https://img.shields.io/badge/Version-8.0.0-brightgreen)]()
-[![Architecture](https://img.shields.io/badge/Architecture-Hybrid_Agentic_AI-purple)]()
+[![Version](https://img.shields.io/badge/Version-5.1.0-brightgreen)]()
+[![Architecture](https://img.shields.io/badge/Architecture-Autonomous_Agentic_AI-purple)]()
 
-> **This is NOT a chatbot. This is NOT a pipeline.**  
-> The system is an autonomous SOC analyst that plans investigations, dynamically orchestrates specialist tools, continuously reflects on collected evidence, validates decisions deterministically, and produces a human-readable investigation report.
+> **This is NOT a traditional AI pipeline or a chatbot.**  
+> The backend has been completely redesigned into a true **Autonomous Agentic SOC Investigation Platform**. It utilizes strict data contracts, deterministic guardrails, and dynamic reflection loops to automate cybersecurity investigations at an enterprise scale.
 
 ---
 
-## Architecture Overview
+## 🌟 What's New in Version 5.1 (Production Review Update)
+This release focuses on enterprise-grade reliability, local model compatibility, and deep explainability.
 
-The system strictly separates five responsibilities: **Perception, Investigation Planning, Evidence Collection, Deterministic Validation, and Communication.**
+### 1. Robust Ollama (Local Model) Compatibility
+- **`json_parser.py` Utility:** Introduced a resilient JSON parser that automatically cleans markdown fences, handles missing braces, and fixes trailing commas. This guarantees stability when using smaller local models like `Qwen3:4b` that occasionally output malformed JSON.
+- **Structured Reflection Engine:** The Reflection phase now uses strict JSON schemas (`needs_more_evidence`, `expected_confidence_gain`, `contradictions_resolved`, `reasoning`), preventing the agentic loop from crashing during replanning.
 
-The LLM does **not** directly make security decisions (Severity, Risk Score, Confidence). The LLM is strictly the **Investigation Planner and Reasoner**, while security-critical actions are validated through deterministic engines.
+### 2. Deep Agentic Tracing (UI & Backend)
+- **Hierarchical Reasoning Trace:** The frontend "Agentic Trace" tab now features nested details. It explicitly displays hypotheses, execution strategies, and missing evidence at every phase (PLAN, EXECUTE, FUSE, REFLECT).
+- **Skipped Tools Log:** The Specialist Execution Log now displays *all* tools. If the Policy Engine rejects a tool (e.g., over budget) or the Planner skips it, it is logged with a `SKIPPED` badge and an italicized explanation.
 
-```
-Raw Logs
-   │
-   ▼
-[Perception Layer]  ← Normalizes logs, extracts events, and sanitizes data. 
-   │                  Quarantines raw log strings from the LLM planner.
-   ▼
-┌──────────────────────────────────────────────────────────────┐
-│                  AGENTIC ORCHESTRATOR                        │
-│                                                              │
-│  [Planner] ← LLM generates hypotheses & tool plans           │
-│      │                                                       │
-│      ▼                                                       │
-│  [Policy Engine] ← Validates plan against security guardrails│
-│      │                                                       │
-│      ▼                                                       │
-│  [Tool Orchestrator] ← Dispatches approved specialists       │
-│      │                 (Behavior, Pattern, TI, IOC, MITRE)   │
-│      ▼                                                       │
-│  [Evidence Aggregator] ← Merges tool results, detects        │
-│      │                   contradictions, updates confidence  │
-│      ▼                                                       │
-│  [Reflection Engine] ← LLM evaluates evidence sufficiency.   │
-│                        If insufficient → Replan (Loop)       │
-└──────────────────────────────────────────────────────────────┘
-   │
-   ▼
-[Decision Engine] ← Deterministic formulas compute Severity, Risk,
-   │                and Confidence based on accumulated evidence. (NO LLM)
-   ▼
-[Report Generator] ← LLM generates final human-readable executive
-   │                 summary and incident narrative.
-   ▼
-[Enterprise SOC Console] ← React frontend visualization
+### 3. Dynamic Confidence Evolution
+- **Progressive Scoring:** `main.py` now dynamically simulates the execution of tools to plot the confidence evolution step-by-step (e.g., Planner → Behavior → Threat Context → Decision).
+- **Explainable Decision Engine:** The deterministic formulas are exposed via `confidence_breakdown` and `risk_breakdown` objects, driving visual UI metrics.
+
+### 4. Hallucination Guardrails
+- **Report Generator Constraints:** Added strict prompt guardrails forbidding the LLM from hallucinating IPs, domains, or attack vectors that are not explicitly present in the `InvestigationObject`'s evidence timeline.
+
+---
+
+## 🏗️ Architecture Overview: The Three Shared Contracts
+
+The architecture revolves around three strict data contracts that isolate LLM reasoning from deterministic security logic:
+
+1. **`InvestigationObject`**: The single source of truth for the entire investigation. It contains all session metadata, extracted events, tool outputs, and the final deterministic severity, risk, and confidence scores. **No duplicate state exists.**
+2. **`InvestigationPlan`**: Generated *only* by the Planner LLM. Contains hypotheses, tool requirements, and execution strategies.
+3. **`ToolResult`**: Returned by every specialist tool. Contains evidence, local confidence, metadata, and provenance.
+
+```mermaid
+graph TD
+    subgraph Shared State
+        IO[(Investigation Object)]
+    end
+
+    subgraph Deterministic Engines
+        Policy[Policy Engine]
+        Agg[Evidence Aggregator]
+        Decide[Decision Engine]
+    end
+
+    subgraph LLM Reasoning
+        Plan[Planner LLM]
+        Reflect[Reflection LLM]
+        Report[Report LLM]
+    end
+
+    IO --> Plan
+    Plan --> |InvestigationPlan| Policy
+    Policy --> |ApprovedPlan| Tools[Specialist Tools]
+    Tools --> |ToolResult| Agg
+    Agg --> |Mutate| IO
+    IO --> Reflect
+    Reflect --> |Needs Replan| Plan
+    Reflect --> |Satisfied| Decide
+    Decide --> |Set Risk/Severity| IO
+    IO --> Report
+    Report --> |Markdown Narrative| IO
 ```
 
 ---
 
-## The 7-Phase Agentic Investigation Loop
+## 🧠 The Agentic Loop
 
-| # | Phase | What Happens |
-|---|-------|-------------|
-| 1 | **PERCEIVE** | The perception layer normalizes heterogeneous logs into a sanitized `InvestigationObject`. Raw strings are quarantined to prevent prompt injection. |
-| 2 | **PLAN** | The LLM planner analyzes the sanitized data and generates an investigation hypothesis, strategy, and a sequence of specialist tools to run. |
-| 3 | **VALIDATE** | The Policy Engine intercepts the LLM's plan, validating requested tools against allowlists and enforcing iteration limits. |
-| 4 | **EXECUTE** | The orchestrator executes the approved specialist tools (often in parallel) to gather evidence. |
-| 5 | **REFLECT** | The LLM evaluates the new evidence. It asks: *Is my hypothesis still valid? Do I need more evidence?* |
-| 6 | **REPLAN** | If reflection determines more evidence is needed, the system loops back to generate a new tool plan. |
-| 7 | **DECIDE & REPORT** | The deterministic Decision Engine computes final severity and risk. The LLM Report Generator then writes a human-readable summary. |
+The investigation operates in a cyclical loop rather than a linear pipeline:
 
----
-
-## Key Innovations
-
-### 1. Prompt Injection Defense (Quarantined Perception)
-All logs are treated as untrusted, attacker-controlled input. The Perception Layer sanitizes logs into a structured metadata format. The LLM Planner only ever sees event counts, anomaly scores, and structural summaries — never the raw log strings that could contain `IGNORE PREVIOUS INSTRUCTIONS` attacks.
-
-### 2. LLM as Planner, Not Decider
-The LLM generates hypotheses and selects tools, but it never sets the incident's `Severity`, `Risk Score`, or `Confidence`. These are calculated deterministically by the Decision Engine using a strict, weighted formula based on tool evidence:
-```
-Confidence = 0.35·LSTM + 0.20·RAG + 0.15·Correlation + 0.10·ThreatIntel + 0.10·Pattern + 0.10·IOC
-Risk Score = anomaly·35 + confidence·25 + TI·20 + pattern·10 + correlation·10
-```
-
-### 3. Dynamic Reflection & Replanning
-Instead of a linear chain, the agent uses a dynamic reflection loop. If the initial evidence contradicts the hypothesis (e.g., high anomaly score but no threat intelligence hits), the LLM can reflect, adjust its hypothesis, and request additional tools (e.g., query the MITRE RAG DB).
-
-### 4. Policy Engine Guardrails
-The LLM cannot directly execute tools. Every plan is intercepted by the `PolicyEngine` which enforces configurable security policies, prevents unauthorized tools, and limits maximum replanning iterations to prevent infinite loops.
+| Phase | Component | Logic Type | Description |
+|---|---|---|---|
+| **1. PERCEIVE** | Perception Layer | Deterministic | Normalizes logs and quarantines raw text from the LLM to prevent prompt injection. Initializes the `InvestigationObject`. |
+| **2. PLAN** | Planner Engine | LLM Reasoning | Analyzes current state and generates an `InvestigationPlan` (hypothesis + required tools). **Cannot execute tools or score severity.** |
+| **3. VALIDATE** | Policy Engine | Deterministic | Intercepts the plan, checking budgets and tool allowlists to output an `ApprovedPlan`. |
+| **4. EXECUTE** | Tool Orchestrator | Deterministic | Executes specialist tools (Behavior LSTM, Pattern Match, Threat Intel, RAG MITRE, etc.) in parallel. |
+| **5. AGGREGATE** | Evidence Aggregator | Deterministic | Merges `ToolResult`s directly into the `InvestigationObject`'s evidence timeline. Detects contradictions. |
+| **6. REFLECT** | Reflection Engine | LLM Reasoning | Reviews the newly populated `InvestigationObject`. If evidence is insufficient, loops back to Phase 2. |
+| **7. DECIDE** | Decision Engine | Deterministic | Mathematically computes **Risk**, **Severity**, and **Confidence**. No LLM hallucination allowed. |
+| **8. REPORT** | Report Generator | LLM Reasoning | Generates the final human-readable markdown narrative based on the finalized state. |
 
 ---
 
-## Project Structure
+## 🤖 Dynamic LLM Gateway Routing
+
+The platform uses a centralized `llm_gateway.py` to route LLM requests based on your environment.
+
+### 1. Local Testing Mode (Default)
+By default (or if `ENV=local`), the platform operates entirely locally using **Ollama** as the primary provider. 
+- **Primary**: Local Ollama Model
+- **Config**: Reads `OPENROUTER_MODEL` (e.g. `qwen3:4b`) and `OPENAI_BASE_URL` (e.g. `http://localhost:11434/v1`) from your `.env`.
+
+### 2. Production Mode
+To enable production mode, set `ENV=production` in your `.env`. This enables a resilient fallback chain:
+- **Primary**: OpenRouter (`OPENROUTER_API_KEY`)
+- **First Fallback**: Google Gemini 2.5 Flash (`GEMINI_API_KEY`)
+- **Second Fallback**: Local Ollama
+
+---
+
+## 📁 Project Structure
 
 ```text
 LLM_Powered_SOC_ANALYST/
 ├── backend/
-│   ├── main.py                        # FastAPI entry point
-│   ├── schemas.py                     # API response schemas
-│   ├── models/
-│   │   └── lstm_model.py              # PyTorch LSTM autoencoder
+│   ├── main.py                        # FastAPI entry point & schema mappers
+│   ├── schemas/
+│   │   ├── __init__.py                # API response schemas (Frontend contracts)
+│   │   └── investigation.py           # Core Architectural Contracts (InvestigationObject)
 │   ├── perception/
-│   │   └── __init__.py                # Phase 1: Data sanitation & object building
-│   ├── rag/
-│   │   ├── rag_engine.py              # ChromaDB semantic search
-│   │   └── build_mitre_db.py          
+│   │   └── __init__.py                # Phase 1: Pure deterministic parsing
 │   └── reasoning/
-│       ├── agent_layer.py             # Agentic Orchestrator (Main Loop)
-│       ├── planner.py                 # Phase 2: LLM Investigation Planner
-│       ├── policy_engine.py           # Phase 3: Tool Guardrails
+│       ├── agent_layer.py             # Master Agentic Loop implementation
+│       ├── planner.py                 # Phase 2: Hypothesis & Planning
+│       ├── policy_engine.py           # Phase 3: Guardrails
 │       ├── agent_tools.py             # Phase 4: Specialist Implementations
-│       ├── evidence_aggregator.py     # State management & contradiction detection
-│       ├── reflection.py              # Phase 5/6: LLM Reflection & Replanning
+│       ├── evidence_aggregator.py     # Phase 5: State management
+│       ├── reflection.py              # Phase 6: Sufficiency evaluation
 │       ├── decision_engine.py         # Phase 7: Deterministic Scoring
-│       ├── report_generator.py        # Final LLM Report Generation
-│       └── llm_agent.py               # OpenRouter Integration
-│
-├── soc-react-frontend/
-│   └── src/
-│       ├── api/socApi.js              # API bindings
-│       ├── constants/scenarios.js     # Preloaded attack logs
-│       └── pages/
-│           ├── Dashboard/             # System health & architecture view
-│           └── Investigate/
-│               └── components/
-│                   ├── InvestigationConsole.jsx  # Rich agentic UI visualization
-│                   └── AgentPhaseTracker.jsx     # Live 7-phase timeline
+│       ├── report_generator.py        # Phase 8: Narrative Generation
+│       ├── llm_gateway.py             # Multi-provider LLM routing
+│       └── memory.py                  # Cross-session entity correlation
 ```
 
 ---
 
-## Setup & Installation
+## 🚀 Setup & Installation
 
-### Prerequisites
-- Python 3.11+
-- Node.js 18+
-- OpenRouter API key (free tier works)
-
-### 1. Clone & Backend Setup
-
+### 1. Environment Setup
 ```bash
-git clone https://github.com/YOUR_USERNAME/LLM_Powered_SOC_ANALYST.git
-cd LLM_Powered_SOC_ANALYST
-
-# Create and activate environment
 conda create -n rag_env python=3.11
 conda activate rag_env
-
-# Install dependencies
-pip install fastapi uvicorn torch chromadb sentence-transformers python-jose passlib python-multipart openai requests pydantic pandas
+pip install fastapi uvicorn torch chromadb sentence-transformers python-jose passlib python-multipart openai requests pydantic pandas google-genai
 ```
 
-### 2. Environment Variables
-
+### 2. Configuration (`.env`)
 Create a `.env` file in the project root:
-
 ```env
-OPENROUTER_API_KEY=sk-or-v1-YOUR_KEY_HERE
-OPENROUTER_MODEL=openai/gpt-oss-120b:free
+# Set to 'production' to use OpenRouter/Gemini, or 'local' to use Ollama
+ENV=local
+
+# Local Ollama Config
+OPENAI_BASE_URL=http://localhost:11434/v1
+OPENROUTER_MODEL=qwen3:4b
+OPENAI_API_KEY=ollama
+
+# Production Config (Optional)
+OPENROUTER_API_KEY=sk-or-v1-...
+GEMINI_API_KEY=AIzaSy...
+
+# Authentication
 JWT_SECRET_KEY=your-super-secret-key-here
 ```
 
-### 3. Build the MITRE ATT&CK DB
-
-```bash
-python -m backend.rag.build_mitre_db
-```
-
-### 4. Start the Backend
-
+### 3. Run the Backend
 ```bash
 uvicorn backend.main:app --reload
 ```
 API runs at `http://localhost:8000`
 
-### 5. Start the Frontend
-
+### 4. Run the Frontend
 ```bash
 cd soc-react-frontend
 npm install
@@ -184,38 +175,3 @@ npm run dev
 Frontend runs at `http://localhost:5173`
 
 **Default Credentials:** `analyst` / `password123`
-
----
-
-## API Reference
-
-### Agent Investigation
-
-```bash
-POST /investigate/agent
-Headers: Authorization: Bearer <token>
-Body: {
-  "logs": "2024-01-15 03:22:11 sshd Failed password...",
-  "entity_id": "host-192.168.1.45"
-}
-
-Returns: AgentAnalysisResponse {
-  "severity": "CRITICAL",
-  "confidence": 0.84,
-  "risk_score": 82.3,
-  
-  "investigation_phases": [...],      # The 7-phase timeline with ms timing
-  "reflection_history": [...],        # LLM replanning and hypothesis adjustments
-  "replan_events": [...],             # Triggers that caused dynamic replanning
-  "confidence_evolution": [...],      # Sparkline data for confidence over time
-  "investigation_report": {           # Final LLM executive summary
-     "executive_summary": "...",
-     "mitre_explanation": "..."
-  }
-}
-```
-
----
-
-## License
-MIT License

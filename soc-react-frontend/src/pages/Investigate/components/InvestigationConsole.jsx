@@ -100,6 +100,7 @@ function ResponsiveSparkline({ values = [] }) {
 const PHASE_META = {
   perceive: { color: '#4488ff', icon: Eye,       label: 'PERCEIVE' },
   plan:     { color: '#aa66ff', icon: Brain,      label: 'PLAN' },
+  'plan (error)': { color: '#ff3333', icon: AlertTriangle, label: 'PLAN (ERROR)' },
   validate: { color: '#ffd740', icon: Shield,     label: 'VALIDATE' },
   execute:  { color: '#ff9800', icon: Zap,        label: 'EXECUTE' },
   reflect:  { color: '#18ffff', icon: RotateCcw,  label: 'REFLECT' },
@@ -370,6 +371,17 @@ export default function InvestigationConsole({ data, onBack }) {
                     )}
                   </div>
                   <p className={styles.phaseDesc}>{phase.description || phase.desc || '—'}</p>
+                  
+                  {/* Render hierarchical details if available */}
+                  {phase.details && typeof phase.details === 'object' && Object.keys(phase.details).length > 0 && (
+                    <div className={styles.phaseDetails} style={{ marginTop: 8, padding: 8, backgroundColor: 'var(--bg-2)', borderRadius: 4, fontSize: 12, color: 'var(--text-2)' }}>
+                      {Object.entries(phase.details).map(([k, v]) => (
+                        <div key={k} style={{ marginBottom: 4 }}>
+                          <strong style={{ color: 'var(--text-1)' }}>{k}:</strong> {v}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -544,12 +556,16 @@ export default function InvestigationConsole({ data, onBack }) {
                 <p>{data.investigation_report.mitre_explanation}</p>
               </div>
             )}
-            {data.investigation_report?.recommendations?.length > 0 && (
+            {data.investigation_report?.recommendations && (
               <div className={styles.reportBlock}>
                 <div className={styles.reportLabel}>RECOMMENDATIONS</div>
-                {data.investigation_report.recommendations.map((r, i) => (
-                  <p key={i} style={{ marginBottom: 4 }}>▸ {typeof r === 'string' ? r : r.action || JSON.stringify(r)}</p>
-                ))}
+                {Array.isArray(data.investigation_report.recommendations) ? (
+                  data.investigation_report.recommendations.map((r, i) => (
+                    <p key={i} style={{ marginBottom: 4 }}>▸ {typeof r === 'string' ? r : r.action || JSON.stringify(r)}</p>
+                  ))
+                ) : (
+                  <p>{data.investigation_report.recommendations}</p>
+                )}
               </div>
             )}
             {!data.investigation_report?.executive_summary && (
@@ -607,10 +623,23 @@ export default function InvestigationConsole({ data, onBack }) {
               <div key={i} className={styles.specialistCard}>
                 <div className={styles.spHeader}>
                   <span className={styles.spName}>{res.tool_name || 'Specialist'}</span>
-                  <span className={`${styles.spStatus} ${res.status === 'success' ? styles.spOk : styles.spErr}`}>
+                  <span className={`${styles.spStatus} ${res.status === 'success' ? styles.spOk : (res.status === 'skipped' ? styles.spMuted : styles.spErr)}`}>
                     {res.status}
                   </span>
                 </div>
+                
+                {res.reason && (
+                  <div className={styles.spReason} style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 4, fontStyle: 'italic' }}>
+                    Reason: {res.reason}
+                  </div>
+                )}
+                
+                {res.expected_evidence && (
+                  <div className={styles.spReason} style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 8, fontStyle: 'italic' }}>
+                    Expected: {res.expected_evidence}
+                  </div>
+                )}
+                
                 <div className={styles.spMetrics}>
                   <span>Exec: {res.execution_time_ms?.toFixed(0) || '0'}ms</span>
                   {res.confidence_contribution > 0 && (

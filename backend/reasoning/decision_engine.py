@@ -1,277 +1,125 @@
 """
 decision_engine.py — Deterministic Decision Engine
-====================================================
+===================================================
 
-The LLM NEVER determines Severity, Risk, Confidence, or Final Action.
-
-Instead this deterministic engine calculates all security-critical
-decisions using policy rules and weighted evidence, guaranteeing
-reproducibility.
-
-Formulas:
-  Confidence = 0.35·LSTM + 0.20·RAG + 0.15·Correlation +
-               0.10·ThreatIntel + 0.10·Pattern + 0.10·IOC
-  Risk       = anomaly·35 + confidence·25 + TI·20 + pattern·10 + correlation·10
+Computes Confidence, Risk, Severity, and Action using strictly deterministic
+formulas based on the evidence in the InvestigationObject.
+The LLM is NEVER used for these calculations.
 """
 
-from __future__ import annotations
+from backend.schemas.investigation import InvestigationObject
 
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
-
-from backend.reasoning.evidence_aggregator import AccumulatedEvidence
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# INVESTIGATION DECISION
-# ═══════════════════════════════════════════════════════════════════════════════
-
-@dataclass
-class InvestigationDecision:
-    """The deterministic output of the decision engine."""
-    severity: str = "LOW"
-    risk_score: float = 0.0
-    confidence: float = 0.0
-    recommended_action: str = "MONITOR"
-    incident_type: str = "Single Session Activity"
-
-    # Breakdown for transparency
-    confidence_breakdown: Dict[str, float] = field(default_factory=dict)
-    risk_breakdown: Dict[str, float] = field(default_factory=dict)
-    severity_factors: List[str] = field(default_factory=list)
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "severity": self.severity,
-            "risk_score": self.risk_score,
-            "confidence": self.confidence,
-            "recommended_action": self.recommended_action,
-            "incident_type": self.incident_type,
-            "confidence_breakdown": self.confidence_breakdown,
-            "risk_breakdown": self.risk_breakdown,
-            "severity_factors": self.severity_factors,
-        }
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# CAMPAIGN PATTERNS (for incident classification)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-CAMPAIGN_PATTERNS = {
-    "full_kill_chain": ["LOGIN", "PRIV_ESC", "LATERAL_MOVE", "EXFILTRATION"],
-    "privilege_escalation_chain": ["LOGIN", "PRIV_ESC", "SUSPICIOUS_EXEC"],
-    "apt_lateral_movement": ["RECON", "LATERAL_MOVE", "EXFILTRATION"],
-    "ransomware_deployment": ["DEFENSE_EVADE", "SUSPICIOUS_EXEC", "EXFILTRATION"],
-    "brute_force_escalation": ["LOGIN", "LOGIN", "PRIV_ESC"],
-    "recon_to_exploit": ["RECON", "SUSPICIOUS_EXEC", "PRIV_ESC"],
-    "credential_theft": ["LOGIN", "SUSPICIOUS_EXEC", "EXFILTRATION"],
-}
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# DECISION ENGINE
-# ═══════════════════════════════════════════════════════════════════════════════
 
 class DecisionEngine:
-    """
-    Deterministic decision engine for security-critical calculations.
-
-    All calculations are rule-based, weighted, and fully reproducible.
-    No LLM involvement in severity/risk/confidence/action decisions.
-    """
-
+    
     @staticmethod
-    def compute_confidence(evidence: AccumulatedEvidence) -> tuple:
+    def evaluate(inv_obj: InvestigationObject) -> None:
         """
-        Compute investigation confidence score.
-
-        Returns (confidence_float, breakdown_dict).
+        Evaluate the InvestigationObject and assign confidence, severity, risk,
+        and decision directly to it.
         """
-        lstm_component = 0.35 * min(evidence.compound_anomaly_score, 1.0)
-        rag_component = 0.20 * min(evidence.rag_matches / 5.0, 1.0)
-        corr_component = 0.15 * min(evidence.correlation_depth / 4.0, 1.0)
-        ti_component = 0.10 * min(evidence.threat_intel_score, 1.0)
-        pattern_component = 0.10 * min(evidence.pattern_score, 1.0)
-        ioc_component = 0.10 * min(evidence.ioc_count / 10.0, 1.0)
+        
+        # 1. Extract signals from tool outputs
+        lstm_score = 0.0
+        ti_score = 0.0
+        ioc_count = 0
+        rag_matches = 0
+        pattern_score = 0.0
+        correlation_sessions = 0
+        
+        for r in inv_obj.tool_outputs:
+            if not isinstance(r.evidence, dict):
+                continue
+            
+            if r.tool_name == "Behavior Analyst":
+                lstm_score = r.evidence.get("anomaly_score", 0.0)
+            elif r.tool_name == "Threat Context":
+                ti_score = r.evidence.get("max_risk_score", 0.0) / 100.0
+            elif r.tool_name == "IOC Analyst":
+                ioc_count = r.evidence.get("suspicious_count", 0)
+            elif r.tool_name == "MITRE Knowledge":
+                rag_matches = len(r.evidence.get("techniques_found", []))
+            elif r.tool_name == "Pattern Analyst":
+                pattern_score = r.evidence.get("pattern_score", 0.0)
+            elif r.tool_name == "Cross Session Memory":
+                correlation_sessions = r.evidence.get("suspicious_sessions", 0)
 
-        total = (
-            lstm_component + rag_component + corr_component
-            + ti_component + pattern_component + ioc_component
+        # 2. Compute Confidence (0.0 - 1.0)
+        c = (
+            0.35 * min(lstm_score, 1.0) +
+            0.20 * min(rag_matches / 5.0, 1.0) +
+            0.15 * min(correlation_sessions / 4.0, 1.0) +
+            0.10 * min(ti_score, 1.0) +
+            0.10 * min(pattern_score, 1.0) +
+            0.10 * min(ioc_count / 10.0, 1.0)
         )
-        confidence = round(min(total, 1.0), 4)
+        
+        # V12 FIX: Apply evidence completeness and contradiction penalties
+        contradictions_count = sum(1 for e in inv_obj.evidence_timeline if e.get("type") == "Contradiction")
+        penalty = 0.0
+        
+        if inv_obj.evidence_completeness < 0.5:
+            penalty += 0.2
+        if contradictions_count > 0:
+            penalty += (0.15 * contradictions_count)
+            
+        c = max(0.0, c - penalty)
+        inv_obj.confidence = round(min(c, 1.0), 4)
 
-        breakdown = {
-            "lstm": round(lstm_component, 4),
-            "rag": round(rag_component, 4),
-            "correlation": round(corr_component, 4),
-            "threat_intel": round(ti_component, 4),
-            "pattern": round(pattern_component, 4),
-            "ioc": round(ioc_component, 4),
+        inv_obj.confidence_breakdown = {
+            "Behavior": round(0.35 * min(lstm_score, 1.0), 4),
+            "MITRE_Knowledge": round(0.20 * min(rag_matches / 5.0, 1.0), 4),
+            "Cross_Session_Memory": round(0.15 * min(correlation_sessions / 4.0, 1.0), 4),
+            "Threat_Context": round(0.10 * min(ti_score, 1.0), 4),
+            "Pattern_Analyst": round(0.10 * min(pattern_score, 1.0), 4),
+            "IOC_Analyst": round(0.10 * min(ioc_count / 10.0, 1.0), 4),
+            "Penalties": round(penalty, 4)
         }
 
-        return confidence, breakdown
-
-    @staticmethod
-    def compute_severity(evidence: AccumulatedEvidence) -> tuple:
-        """
-        Compute severity level based on evidence thresholds.
-
-        Returns (severity_str, factors_list).
-        """
-        anomaly = evidence.compound_anomaly_score
-        corr_depth = evidence.correlation_depth
-        mitre_count = len(evidence.compound_mitre_mappings)
-        ti_score = evidence.threat_intel_score
-
-        factors: List[str] = []
-
-        if anomaly < 0.2:
-            if mitre_count >= 1 or ti_score > 0 or corr_depth >= 1:
-                severity = "MEDIUM"
-                if mitre_count >= 1:
-                    factors.append(f"MITRE techniques detected ({mitre_count})")
-                if ti_score > 0:
-                    factors.append(f"Threat intel positive (score={ti_score:.2f})")
-                if corr_depth >= 1:
-                    factors.append(f"Cross-session correlation (depth={corr_depth})")
-            else:
-                severity = "LOW"
-                factors.append("No significant indicators")
-        elif anomaly < 0.6:
-            severity = "MEDIUM"
-            factors.append(f"Moderate anomaly score ({anomaly:.2f})")
-        else:
-            if (
-                anomaly >= 0.8
-                or corr_depth >= 2
-                or mitre_count >= 2
-                or ti_score > 0.5
-            ):
-                severity = "CRITICAL"
-                if anomaly >= 0.8:
-                    factors.append(f"Critical anomaly ({anomaly:.2f})")
-                if corr_depth >= 2:
-                    factors.append(f"Deep correlation ({corr_depth} sessions)")
-                if mitre_count >= 2:
-                    factors.append(f"Multiple MITRE techniques ({mitre_count})")
-                if ti_score > 0.5:
-                    factors.append(f"High threat intel ({ti_score:.2f})")
-            else:
-                severity = "HIGH"
-                factors.append(f"Elevated anomaly ({anomaly:.2f})")
-
-        return severity, factors
-
-    @staticmethod
-    def compute_risk_score(
-        anomaly: float,
-        confidence: float,
-        ti_score: float,
-        pattern_score: float,
-        corr_depth: int,
-    ) -> tuple:
-        """
-        Compute overall risk score (0-100).
-
-        Returns (risk_float, breakdown_dict).
-        """
-        anomaly_comp = anomaly * 35
-        confidence_comp = confidence * 25
-        ti_comp = ti_score * 20
-        pattern_comp = pattern_score * 10
-        corr_comp = min(corr_depth / 4.0, 1.0) * 10
-
-        raw = anomaly_comp + confidence_comp + ti_comp + pattern_comp + corr_comp
-        risk = round(min(raw, 100.0), 1)
-
-        breakdown = {
-            "anomaly": round(anomaly_comp, 1),
-            "confidence": round(confidence_comp, 1),
-            "threat_intel": round(ti_comp, 1),
-            "pattern": round(pattern_comp, 1),
-            "correlation": round(corr_comp, 1),
+        # 3. Compute Risk Score (0 - 100)
+        risk = (
+            (lstm_score * 35) +
+            (inv_obj.confidence * 25) +
+            (ti_score * 20) +
+            (pattern_score * 10) +
+            (min(correlation_sessions / 4.0, 1.0) * 10)
+        )
+        inv_obj.risk = round(min(risk, 100.0), 2)
+        
+        inv_obj.risk_breakdown = {
+            "Anomaly_Signal": round(lstm_score * 35, 2),
+            "Overall_Confidence": round(inv_obj.confidence * 25, 2),
+            "Threat_Intel": round(ti_score * 20, 2),
+            "Pattern_Match": round(pattern_score * 10, 2),
+            "Memory_Correlation": round(min(correlation_sessions / 4.0, 1.0) * 10, 2)
         }
 
-        return risk, breakdown
+        # 4. Determine Severity and Factors
+        factors = []
+        if lstm_score > 0.7: factors.append(f"High behavioral anomaly ({lstm_score})")
+        if ti_score > 0.5: factors.append(f"Known malicious indicators found")
+        if pattern_score > 0.7: factors.append(f"Matches known attack pattern")
+        if contradictions_count > 0: factors.append(f"Confidence reduced due to {contradictions_count} contradiction(s)")
+        if inv_obj.evidence_completeness < 0.5: factors.append(f"Low evidence completeness ({inv_obj.evidence_completeness * 100}%)")
+        
+        if not factors: factors.append("No significant risk factors")
+        inv_obj.severity_factors = factors
 
-    @staticmethod
-    def decide_action(confidence: float, severity: str) -> str:
-        """Determine recommended action based on severity and confidence."""
-        sev = severity.upper()
-        if sev == "CRITICAL" and confidence >= 0.5:
-            return "AUTO_REMEDIATE"
-        elif sev in ("HIGH", "CRITICAL") or confidence >= 0.6:
-            return "ESCALATE_L2"
-        return "MONITOR"
-
-    @staticmethod
-    def classify_incident(
-        pattern_name: Optional[str],
-        correlation_depth: int,
-    ) -> str:
-        """Classify the incident type based on detected patterns."""
-        if pattern_name == "BRUTE_FORCE":
-            return "Brute Force Attack Attempt"
-        elif pattern_name == "SUSPICIOUS_EXECUTION_CHAIN":
-            return "Suspicious Execution Chain"
-        elif pattern_name == "PRIVILEGE_ESCALATION_SPIKE":
-            return "Privilege Escalation Attempt"
-        elif pattern_name == "CREDENTIAL_HARVESTING":
-            return "Credential Harvesting Campaign"
-        elif pattern_name == "DEFENSE_EVASION_CHAIN":
-            return "Defense Evasion Campaign"
-        elif pattern_name == "DATA_STAGING":
-            return "Data Staging & Exfiltration"
-        elif pattern_name == "RECON_TO_EXPLOIT":
-            return "Reconnaissance to Exploitation"
-        elif pattern_name == "C2_COMMUNICATION":
-            return "Command & Control Communication"
-        elif correlation_depth == 0:
-            return "Single Session Activity"
-        elif correlation_depth == 1:
-            return "Repeated Suspicious Activity"
-        elif correlation_depth == 2:
-            return "Correlated Attack Campaign"
+        if inv_obj.risk >= 85:
+            inv_obj.severity = "CRITICAL"
+        elif inv_obj.risk >= 65:
+            inv_obj.severity = "HIGH"
+        elif inv_obj.risk >= 40:
+            inv_obj.severity = "MEDIUM"
         else:
-            return "Multi-Stage Attack"
+            inv_obj.severity = "LOW"
 
-    def decide(self, evidence: AccumulatedEvidence) -> InvestigationDecision:
-        """
-        Run the full deterministic decision pipeline.
-
-        Takes accumulated evidence and produces Severity, Risk, Confidence,
-        Action, and Incident Type — all deterministically.
-        """
-        # Confidence
-        confidence, conf_breakdown = self.compute_confidence(evidence)
-
-        # Severity
-        severity, sev_factors = self.compute_severity(evidence)
-
-        # Risk score
-        risk, risk_breakdown = self.compute_risk_score(
-            anomaly=evidence.compound_anomaly_score,
-            confidence=confidence,
-            ti_score=evidence.threat_intel_score,
-            pattern_score=evidence.pattern_score,
-            corr_depth=evidence.correlation_depth,
-        )
-
-        # Action
-        action = self.decide_action(confidence, severity)
-
-        # Incident type
-        incident_type = self.classify_incident(
-            evidence.pattern_name, evidence.correlation_depth
-        )
-
-        return InvestigationDecision(
-            severity=severity,
-            risk_score=risk,
-            confidence=confidence,
-            recommended_action=action,
-            incident_type=incident_type,
-            confidence_breakdown=conf_breakdown,
-            risk_breakdown=risk_breakdown,
-            severity_factors=sev_factors,
-        )
+        # 5. Determine Action
+        if inv_obj.severity == "CRITICAL":
+            inv_obj.decision = "ISOLATE_HOST_AND_PULL_MEMORY"
+        elif inv_obj.severity == "HIGH":
+            inv_obj.decision = "BLOCK_IPS_AND_ALERT_ONCALL"
+        elif inv_obj.severity == "MEDIUM":
+            inv_obj.decision = "CREATE_JIRA_TICKET"
+        else:
+            inv_obj.decision = "MONITOR"
