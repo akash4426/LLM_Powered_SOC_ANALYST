@@ -213,6 +213,26 @@ def pad_sequence(seq: List[int], max_len: int = MAX_SEQ_LEN) -> List[int]:
     return seq + [PAD_IDX] * (max_len - len(seq))
 
 
+def _heuristic_score(sequence: List[int]) -> float:
+    HIGH_RISK_CODES = {5, 6, 7, 8, 9}
+    MEDIUM_RISK_CODES = {1, 3}  # LOGIN, OUTBOUND_CONN
+
+    if not sequence:
+        return 0.0
+
+    high_count   = sum(1 for c in sequence if c in HIGH_RISK_CODES)
+    medium_count = sum(1 for c in sequence if c in MEDIUM_RISK_CODES)
+    total = len(sequence)
+
+    unique_high = len(set(sequence) & HIGH_RISK_CODES)
+    chain_bonus = min(unique_high * 0.1, 0.3)
+
+    import math
+    effective_total = math.sqrt(total) if total > 1 else 1.0
+
+    raw_score = (high_count * 0.5 + medium_count * 0.2) / effective_total + chain_bonus
+    return round(min(raw_score, 1.0), 4)
+
 def score_sequence(sequence: List[int]) -> float:
     """
     Score a single event sequence for anomaly.
@@ -221,39 +241,18 @@ def score_sequence(sequence: List[int]) -> float:
       0.0 = completely normal
       1.0 = highly anomalous
 
-    Falls back to a heuristic scoring if model not trained.
+    Falls back to a heuristic scoring if model not trained, 
+    and uses heuristic as a baseline guardrail.
     """
     global _model
+
+    heuristic = _heuristic_score(sequence)
 
     if _model is None:
         _model = load_model()
 
     if _model is None:
-        # ── Heuristic fallback ────────────────────────────────────────────
-        # Score based on presence of high-risk event codes
-        # Event codes: 5=PRIV_ESC, 6=SUSPICIOUS_EXEC, 7=LATERAL_MOVE,
-        #              8=DEFENSE_EVADE, 9=EXFILTRATION
-        HIGH_RISK_CODES = {5, 6, 7, 8, 9}
-        MEDIUM_RISK_CODES = {1, 3}  # LOGIN, OUTBOUND_CONN
-
-        if not sequence:
-            return 0.0
-
-        high_count   = sum(1 for c in sequence if c in HIGH_RISK_CODES)
-        medium_count = sum(1 for c in sequence if c in MEDIUM_RISK_CODES)
-        total = len(sequence)
-
-        # Check for multi-stage attack patterns
-        unique_high = len(set(sequence) & HIGH_RISK_CODES)
-        chain_bonus = min(unique_high * 0.1, 0.3)  # up to 0.3 bonus for diverse stages
-
-        import math
-        # Make the math much more aggressive for high-risk occurrences
-        # Use log or sqrt to prevent the total volume of 'benign' events from severely diluting a single critical threat
-        effective_total = math.sqrt(total) if total > 1 else 1.0
-
-        raw_score = (high_count * 0.5 + medium_count * 0.2) / effective_total + chain_bonus
-        return round(min(raw_score, 1.0), 4)
+        return heuristic
 
     # ── Neural model scoring ──────────────────────────────────────────────
     padded = pad_sequence(sequence)
@@ -266,7 +265,10 @@ def score_sequence(sequence: List[int]) -> float:
     # Normalise to [0, 1] using calibration range
     span = max(_threshold_attack - _threshold_normal, 0.1)
     normalised = (raw_loss - _threshold_normal) / span
-    return round(_clip01(normalised), 4)
+    
+    neural_score = round(_clip01(normalised), 4)
+    # Guardrail: Never let the neural model suppress blatant heuristic flags
+    return max(neural_score, heuristic)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

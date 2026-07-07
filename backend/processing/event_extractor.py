@@ -142,6 +142,7 @@ _RULES = [
         r"runas\b.*\/user:.*administrator",
         r"spawned.*system|launched.*system|cmd.*system",
         r"privilege.*escalat|escalat.*privilege",
+        r"special privileges\s+assigned",
         r"token.*impersonat",
         r"uac bypass|eventvwr.*bypass",
         r"named pipe.*impersonat",
@@ -214,6 +215,7 @@ _RULES = [
         r"failed password|authentication fail|login fail",
         r"invalid user|invalid password",
         r"accepted password|session opened|successful.*login|logon.*success",
+        r"logon type \d+",
         r"authenticated.*via|authenticate.*to\b",
         r"pam_unix.*session",
     ], "T1110 Brute Force"),
@@ -233,7 +235,7 @@ def classify_event(log: Dict[str, Any]) -> SecurityEvent:
 
     for (event_type, patterns, mitre_hint) in _RULES:
         for pat in patterns:
-            if re.search(pat, lower_raw):
+            if re.search(pat, lower_raw, re.DOTALL):
                 matched_type = event_type
                 matched_mitre = mitre_hint
                 break
